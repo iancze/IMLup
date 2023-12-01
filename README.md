@@ -18,7 +18,7 @@ Example Repository for DSHARP IM Lup MPoL Analysis
                 temp/
             Snakefile
 
-Note, this repository is not meant to be a fully-reproducible environment with software dependencies and everything (though we are making some attempt with `snakemake`). It is configured the rather strange way it is because I need to approach this folder using two separate Docker images, mounting the `IMLup` folder as a volume. This is because the Docker images that will run CASA without bugs (Python 3.8) are so old that they won't run the optimized NVIDIA GPU files (Python 3.10, at latest). 
+Note, this repository is not meant to be a fully-reproducible environment with software dependencies and everything (though we are making some attempt with `snakemake`). It is configured the rather strange way it is because I need to approach this folder using two separate Docker images, mounting the `IMLup` folder as a volume. This is because the Docker images that will run CASA without bugs (Python 3.8) are so old that they won't run the optimized NVIDIA GPU files (Python 3.10, at oldest). 
 
 The main idea is that Docker image #1 is non-GPU and configured with CASA modular and works with the scripts in `casa_analysis`. The goal of these scripts is to double-check we're understanding the DSHARP data correctly, (possibly) rescale the weights, and export the visibilities to a file format that does not depend on CASA, e.g. `casa_analysis/data/temp/data.asdf`.
 
