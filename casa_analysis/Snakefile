@@ -1,0 +1,180 @@
+ddids = [i for i in range(0,26)]
+
+rule all:
+    input:
+        "data/temp/initial/dsharp.fits", 
+        "data/temp/initial/IMLup_continuum.py", 
+        "data/temp/initial/ms.ms", 
+        "data/temp/initial/listobs.txt",
+        "data/temp/initial/colnames.txt",
+        "data/temp/initial/antenna_names.txt",
+        "data/temp/initial/baselines.txt",
+        "data/temp/initial/au_output.txt",
+        expand("data/temp/initial/baseline_plots/{ddid}.png", ddid=ddids)
+
+############################
+# Download DSHARP products #
+############################
+rule download_script:
+    output: "data/temp/initial/IMLup_continuum.py"
+    shell: "wget https://almascience.eso.org/almadata/lp/DSHARP/scripts/IMLup_continuum.py --directory-prefix=data/temp/initial/"
+
+rule download_fits:
+    output: "data/temp/initial/dsharp.fits"
+    shell: 
+        "wget https://almascience.eso.org/almadata/lp/DSHARP/images/IMLup_continuum.fits --directory-prefix=data/temp/initial/ && "
+        "mv data/temp/initial/IMLup_continuum.fits data/temp/initial/dsharp.fits"
+
+rule download_ms:
+    output: temp("data/temp/initial/IMLup_continuum.ms.tgz")
+    shell: "wget https://almascience.eso.org/almadata/lp/DSHARP/MSfiles/IMLup_continuum.ms.tgz --directory-prefix=data/temp/initial/"
+
+rule untar_and_rename:
+    input: "data/temp/initial/IMLup_continuum.ms.tgz"
+    output: directory("data/temp/initial/ms.ms")
+    shell: 
+        "tar -xf {input} -C data/temp/initial/ --no-same-owner && "
+        "mv data/temp/initial/IMLup_continuum.ms {output}"
+
+##############################################
+# Basic statistics and information gathering #
+##############################################
+rule listobs:
+    input: "{dir}/ms.ms"
+    output: "{dir}/listobs.txt"
+    shell: "python src/listobs.py {input} {output}"
+
+rule colnames:
+    input: "{dir}/ms.ms"
+    output: "{dir}/colnames.txt"
+    shell: "python src/get_colnames.py {input} {output}"
+
+
+# There are 7 distinct observations: ObsID 0 through 6. 
+# Each observation appears to have anywhere between 4 and 40 scans inside of it
+# Each observation has anywhere from 2 to 6 spectral windows (prob from astrochem proposals)
+# There are 26 unique spectral windows, 0 through 25.
+# The DSHARP analysis file lists the program ids as 
+# SB1: 2013.1.00226.S
+#      Observed 06 July 2014 (1 execution block)
+# SB2: 2013.1.00226.S
+#      Observed 17 July 2014 (1 execution block)
+#      (see Huang et al. 2017 for additional reduction comments)
+# SB3: 2013.1.00694.S
+#      Observed 29 January 2015 (1 execution block)
+# SB4: 2013.1.00694.S
+#      Observed 13 May 2015 (1 execution block)
+# SB5: 2013.1.00798.S
+#      Observed 09 June 2015 (1 execution block)
+# LB1: 2016.1.00484.L
+#      Observed 25 September 2017 and 24 October 2017 (2 execution blocks)
+
+
+rule antenna_names:
+    input: "{dir}/ms.ms"
+    output: "{dir}/antenna_names.txt"
+    shell: "python src/get_antenna_names.py {input} --outfile {output}"
+
+
+rule baseline_list:
+    input: "{dir}/ms.ms"
+    output: "{dir}/baselines.txt"
+    shell: "python src/list_antenna_baselines.py {input} {output}"
+
+rule au_stats:
+    input: "{dir}/ms.ms"
+    output: "{dir}/au_output.txt"
+    shell: "python src/get_analysis_stats.py {input} {output}"
+
+rule baselines:
+    input: "{dir}/ms.ms"
+    output: 
+        files=expand("{{dir}}/baseline_plots/{ddid}.png", ddid=ddids),
+        outdir=directory("{dir}/baseline_plots/")
+    shell: "python src/baselines.py {input} {output.outdir}"
+# Many datadescid's have individual channels flagged. Need to be careful about how we might combine these, later.
+
+# fiducial imaging reference pars are
+rule apparentsens:
+    input: "data/temp/initial/ms.ms"
+    output: "data/temp/initial/apparentsens.txt"
+    shell: "python src/calc_apparentsens.py {input} --robust=0.5 --cell 0.01 --imsize 256 --outfile {output}"
+
+
+# # Make a rough plot (dirty image) of the continuum emission, so that we can understand where to start
+# rule dirty_image:
+#     input: "data/temp/contavg/ms.ms"
+#     output: directory("data/temp/contavg/dirty/dirty.image")
+#     shell: "python ../aksco_common/imaging_dirty.py {input} data/temp/contavg/dirty/dirty"
+
+# rule elliptical_mask:
+#     input: "src/masks/ellipsemask"
+#     output: "data/{dir}/ellipsemask"
+#     shell: "cp {input} {output}"
+
+# # Use the masks to produce CLEAN images. 
+# # We will try a few different robust values.
+# # The threshold changes with robust value, so we will use a `params` statement
+# # To read off the corresponding threshold argument for each robust value
+# thresholds = {"-0.5":0.1, "0.0":0.08, "0.5":0.06} # mJy/beam
+
+# rule clean_robust:
+#     input: ms="{dir}/ms.ms", mask="{dir}/ellipsemask"
+#     params: threshold=lambda wildcards: thresholds[wildcards.robust]
+#     output: directory("{dir}/robust_{robust}/clean.image"), directory("{dir}/robust_{robust}/clean.psf"), "{dir}/robust_{robust}/clean.fits"
+#     shell: "python ../aksco_common/imaging_clean.py {input.ms} {wildcards.dir}/robust_{wildcards.robust}/clean --robust={wildcards.robust} --mask={input.mask} --threshold={params.threshold}"
+
+# rule images_robust:
+#     input: expand("data/temp/contavg/robust_{robust}/clean.fits", robust=["-0.5", "0.0", "0.5"])
+
+
+# # Inspect using CARTA
+# # it all looks pretty good, much higher S/N than the C6 or C7 cont images.
+
+# #Define a noise annulus, measure the peak SNR in map 
+# # [[center_ra, center_dec], [inner radius, outer radius]]
+# noise_annulus = "annulus[[253.68682237deg, -36.88863148deg], [0.6arcsec, '1.3arcsec']]"
+
+# # use makemask to make a binary version of this so that we can verify it lands on the image correctly.
+# rule binary_annulus:
+#     input: "data/temp/contavg/robust_0.0/clean.image"
+#     output: directory("data/temp/contavg/robust_0.0/annulus.mask")
+#     shell: "python ../aksco_common/makemask.py {{input}} {{output}} '{mask}'".format(mask=noise_annulus)
+
+# # the centering looks good
+
+# # Use this annulus to estimate noise 
+# # Use the CLEAN mask to do photometry
+# # We can use the string masks, don't need binary masks for these
+# # Calculate and print flux values and pipe output to a file.
+# rule SNR:
+#     input: image="{dir}/{iter}/clean.image", mask="{dir}/ellipsemask"
+#     output: "{dir}/{iter}/stats.txt"
+#     shell: "python ../aksco_common/estimate_SNR.py {{input.image}} {{input.mask}} '{mask}' > {{output}}".format(mask=noise_annulus)
+
+
+# # Create .pdf/.png diagnostic images of each of the CLEAN images and the PSF
+# rule clean_plot:
+#     input: "{dir}/{robust_dir}/{imroot}.image", "{dir}/{robust_dir}/{imroot}.psf"
+#     output: "{dir}/{robust_dir}/{imroot}.png"
+#     shell: "python ../aksco_common/plot_beam_image.py {wildcards.dir}/{wildcards.robust_dir}/{wildcards.imroot} {output} --beam_radius 0.5 --image_radius 0.6"
+
+# rule clean_plots:
+#     input: expand("data/temp/contavg/robust_{robust}/clean.png", robust=["-0.5", "0.0", "0.5"])
+
+
+
+# # make a CLEAN cont modelcolumn and inspect weight scatter
+# # there are 4 spws, so the images will be 00, 01, ..
+# weight_pngs = ["00.png", "01.png", "02.png", "03.png"]
+# rule weight_plot:
+#     input: ms="{dir}/ms.ms", image="{dir}/{robust_dir}/clean.image"
+#     output: expand("{{dir}}/{{robust_dir}}/{{scaled_type}}/{spw_png}", spw_png=weight_pngs)
+#     shell: "python ../aksco_common/weight_scatter.py {input.ms} {wildcards.dir}/{wildcards.robust_dir}/{wildcards.scaled_type}/ {wildcards.scaled_type}"
+
+# rule weight_scatters:
+#     input: expand("data/temp/contavg/robust_0.0/{scaled_type}/{spw_png}", scaled_type=["raw", "raw-resid", "rescale"], spw_png=weight_pngs)
+
+# # we see similar rescale factors being required
+# # 1.76 for spw 0
+# # 1.85 for the others

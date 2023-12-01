@@ -1,3 +1,10 @@
+# Analysis output
+casa_analysis/data
+mpol_analysis/data
+
+# Snakemake
+.snakemake
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
