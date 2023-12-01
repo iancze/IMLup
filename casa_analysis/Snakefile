@@ -1,4 +1,5 @@
 ddids = [i for i in range(0,26)]
+SB_ddids = [i for i in range(0,18)]
 
 rule all:
     input:
@@ -17,7 +18,11 @@ rule all:
         "data/temp/initial/robust_0.5/clean.image", 
         "data/temp/initial/robust_0.5/clean.psf", 
         "data/temp/initial/robust_0.5/clean.fits",
-        expand("data/temp/initial/robust_0.5/{scaled_type}/{ddid:02d}.png", scaled_type=["raw", "raw-resid", "rescale"], ddid=ddids)
+        expand("data/temp/initial/robust_0.5/{scaled_type}/{ddid:02d}.png", scaled_type=["raw", "raw-resid", "rescale"], ddid=ddids),
+        "data/temp/SB/ms.ms",
+        "data/temp/SB/dirty/dirty.image",
+        "data/temp/SB/robust_0.5/clean.image",
+        expand("data/temp/SB/robust_0.5/{scaled_type}/{ddid:02d}.png", scaled_type=["raw", "raw-resid", "rescale"], ddid=SB_ddids)
 
 ############################
 # Download DSHARP products #
@@ -125,7 +130,8 @@ rule apparentsens:
     output: "data/temp/initial/apparentsens.txt"
     shell: "python src/calc_apparentsens.py {input} --robust=0.5 --cell 0.003 --imsize 4000 --outfile {output}"
 # delivered RMS Point source sensitivity : 0.0068 mJy
-# DSHARP measured 0.0131 mJy, so this seems like this could be solved by a typical weight scatter issue.
+# DSHARP measured 0.0131 mJy, about twice the theoretical, so this seems like this could be solved by a typical weight scatter issue.
+# On further inspection, this could also be to the calibration errors in the dataset. Dunno if a type of self-cal would fix this.
 
 # Make a rough plot (dirty image) of the continuum emission, so that we can understand where to start
 rule dirty_image:
@@ -149,10 +155,10 @@ rule elliptical_mask:
 #                robust=0.5, gain=0.1, imsize=4000, 
 #                uvtaper=['0.033arcsec', '0.026arcsec', '137.53deg'])
 
-rule clean_robust:
-    input: ms="{dir}/ms.ms", mask="{dir}/ellipsemask"
-    output: directory("{dir}/robust_0.5/clean.image"), directory("{dir}/robust_0.5/clean.psf"), "{dir}/robust_0.5/clean.fits"
-    shell: "python src/imaging_clean.py {input.ms} {wildcards.dir}/robust_0.5/clean --robust=0.5 --mask={input.mask} --threshold=0.05 --scales 0 10 50 150 300 450"
+rule clean:
+    input: ms="data/temp/initial/ms.ms", mask="data/temp/initial/ellipsemask"
+    output: directory("data/temp/initial/robust_0.5/clean.image"), directory("data/temp/initial/robust_0.5/clean.psf"), "data/temp/initial/robust_0.5/clean.fits"
+    shell: "python src/imaging_clean.py {input.ms} data/temp/initial/robust_0.5/clean --imsize 4000 --cell 0.003 --robust=0.5 --mask={input.mask} --threshold=0.05 --scales 0 10 50 150 300 450 --uvtaper '0.033arcsec' '0.026arcsec' '137.53deg'"
 
 
 # make a CLEAN cont modelcolumn and inspect weight scatter
@@ -165,3 +171,38 @@ rule weight_plot:
 rule weight_scatters:
     input: expand("data/temp/initial/robust_0.5/{scaled_type}/{ddid:02d}.png", scaled_type=["raw", "raw-resid", "rescale"], ddid=ddids)
 
+
+# OK, we're really confused about the non-zero (positive) mean in the real residuals, seen in DDIDs 0 - 17, or the 2013.X programs
+# So we'll split out just these values and then repeat the dirty / clean / scatter process to see if we can learn anything more
+# All of these programs are short-baseline (max BL like 700 m, or ~0.4" features), so my guess is that the bright "core" could
+# show up as a point source and thus contribute to the positive mean, but I thought I was subtracting it, so I don't know!
+rule split_SB:
+    input: "data/temp/initial/ms.ms"
+    output: directory("data/temp/SB/ms.ms")
+    shell: "python src/split_SB.py {input} {output}"
+
+# Make a rough plot (dirty image) of the continuum emission, so that we can understand where to start
+rule dirty_image_SB:
+    input: "data/temp/SB/ms.ms"
+    output: directory("data/temp/SB/dirty/dirty.image")
+    shell: "python src/imaging_dirty.py {input} data/temp/SB/dirty/dirty --imsize 1000 --cell 0.05 --robust=0.5"
+
+rule clean_SB:
+    input: ms="data/temp/SB/ms.ms", mask="data/temp/SB/ellipsemask"
+    output: directory("data/temp/SB/robust_0.5/clean.image"), directory("data/temp/SB/robust_0.5/clean.psf"), "data/temp/SB/robust_0.5/clean.fits"
+    shell: "python src/imaging_clean.py {input.ms} data/temp/SB/robust_0.5/clean --imsize 1000 --cell 0.05 --robust=0.5 --mask={input.mask} --threshold=0.05 --scales 0 10 30"
+
+
+rule weight_plot_SB:
+    input: ms="data/temp/SB/ms.ms", image="data/temp/SB/robust_0.5/clean.image"
+    output: expand("data/temp/SB/robust_0.5/{{scaled_type}}/{ddid:02d}.png", ddid=SB_ddids)
+    shell: "python src/weight_scatter.py {input.ms} data/temp/SB/robust_0.5/{wildcards.scaled_type}/ {wildcards.scaled_type} --datacolumn data"
+
+rule weight_scatters_SB:
+    input: expand("data/temp/SB/robust_0.5/{scaled_type}/{ddid:02d}.png", scaled_type=["raw", "raw-resid", "rescale"], ddid=SB_ddids)
+
+
+rule export_asdf:
+    input: "data/temp/initial/ms.ms"
+    output: "data/export/imlup.asdf"
+    shell: "python src/export_asdf.py {input} {output}"

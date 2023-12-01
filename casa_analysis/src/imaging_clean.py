@@ -6,7 +6,7 @@ import casatasks
 from aksco_common.image_utils import clear_extensions, exportfits
 
 
-def tclean_image_cont(ms, imagename, robust=0.0, imsize=1000, cell=0.003, mask="", threshold=0.08, scales=[0, 5, 30, 100]):
+def tclean_image_cont(ms, imagename, robust=0.0, imsize=1000, cell=0.003, mask="", threshold=0.08, scales=[0, 5, 30, 100], uvtaper=None):
     """Make a CLEAN image.
     
     Args:
@@ -17,6 +17,7 @@ def tclean_image_cont(ms, imagename, robust=0.0, imsize=1000, cell=0.003, mask="
         cell (float): cell size in arcseconds
         mask (string): path to mask file
         threshold (float): stopping threshold of point source in mJy (mJy/beam).
+        uvtaper : None
         
     Returns:
         None
@@ -24,20 +25,37 @@ def tclean_image_cont(ms, imagename, robust=0.0, imsize=1000, cell=0.003, mask="
 
     clear_extensions(imagename)
 
-    casatasks.tclean(vis=ms,
-        imagename=imagename,
-        specmode="mfs",
-        deconvolver="multiscale",
-        scales=scales,
-        weighting="briggs",
-        robust=robust,
-        imsize=imsize,
-        cell="{:.5f}arcsec".format(cell),
-        niter=50000,
-        threshold="{:.4f}mJy".format(threshold), # / beam
-        nterms=1,
-        savemodel="modelcolumn",
-        mask=mask)
+    if uvtaper is not None:
+        casatasks.tclean(vis=ms,
+            imagename=imagename,
+            specmode="mfs",
+            deconvolver="multiscale",
+            scales=scales,
+            weighting="briggs",
+            robust=robust,
+            imsize=imsize,
+            cell="{:.5f}arcsec".format(cell),
+            niter=50000,
+            threshold="{:.4f}mJy".format(threshold), # / beam
+            nterms=1,
+            savemodel="modelcolumn",
+            mask=mask,
+            uvtaper=uvtaper)
+    else:
+        casatasks.tclean(vis=ms,
+            imagename=imagename,
+            specmode="mfs",
+            deconvolver="multiscale",
+            scales=scales,
+            weighting="briggs",
+            robust=robust,
+            imsize=imsize,
+            cell="{:.5f}arcsec".format(cell),
+            niter=50000,
+            threshold="{:.4f}mJy".format(threshold), # / beam
+            nterms=1,
+            savemodel="modelcolumn",
+            mask=mask)
 
     exportfits(imagename + ".image", imagename + ".fits")
 
@@ -54,9 +72,10 @@ def main():
     parser.add_argument("--mask", default="", help="Path to mask file")
     parser.add_argument("--threshold", default=0.08, type=float, help="Stopping threshold in mJy (mJy/beam).")
     parser.add_argument("--scales", type=int, nargs="+", default=[0, 5, 30, 100])
+    parser.add_argument("--uvtaper", type=str, nargs=3)
     args = parser.parse_args()
     
-    tclean_image_cont(args.ms, args.imagename, args.robust, args.imsize, args.cell, args.mask, args.threshold, args.scales)
+    tclean_image_cont(args.ms, args.imagename, args.robust, args.imsize, args.cell, args.mask, args.threshold, args.scales, args.uvtaper)
 
 if __name__=="__main__":
     main()
