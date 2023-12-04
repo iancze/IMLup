@@ -1,0 +1,21 @@
+rule all:
+    input:
+        "data/raw/imlup.asdf",
+        "data/raw/dsharp.fits"
+
+# copy the exported data from CASA into this directory
+rule seed_data:
+    output: data="data/raw/imlup.asdf", fits="data/raw/dsharp.fits"
+    shell: 
+        "cp ../casa_analysis/data/export/imlup.asdf {output.data} && "
+        "cp ../casa_analysis/data/temp/initial/dsharp.fits {output.fits}"
+
+rule baselines:
+    input: "data/raw/imlup.asdf"
+    output: "analysis/baselines.png"
+    shell: "python src/plot_baselines.py {output}"
+
+# make a dirty image and compare to CLEAN
+# rule dirty_img_comparison:
+
+

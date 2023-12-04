@@ -206,3 +206,6 @@ rule export_asdf:
     input: "data/temp/initial/ms.ms"
     output: "data/export/imlup.asdf"
     shell: "python src/export_asdf.py {input} {output}"
+
+# inspect it went correctly
+# python src/inspect_asdf.py data/export/imlup.asdf

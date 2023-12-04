@@ -12,30 +12,30 @@ def pack_file(ms, outfile):
     # but otherwise keep continuum channels separate
 
     # group by ObsID
-    # group by spw/ddid
+    # group by ddid
     obsid = {0:[0,1,2,3,4], 1:[5,6,7,8,9,10], 2:[11,12], 3:[13,14], 4:[15,16,17], 5:[18,19,20,21], 6:[22,23,24,25]}
 
-    obs_tree = {}
+    obs_tree = {"obsids":{}}
     
-    for key, spws in obsid.items():
-        spw_tree = {}
+    for key, ddids in obsid.items():
+        ddid_tree = {"ddids":{}}
 
         # for a given spw
-        for spw in spws:
+        for ddid in ddids:
             # get processed visibilities
             # includes flipping frequency, if necessary
             # including complex conjugation
             # no channel-averaging (assuming DSHARP did this to the maximal extent possible)
-            d = process.get_processed_visibilities(ms, spw)
+            d = process.get_processed_visibilities(ms, ddid)
 
             # drop the "model_data" key from this dictionary, we no longer need it
             d.pop("model_data")
 
             # add this sub-dictionary to a larger dictionary
-            spw_tree[spw] = d
+            ddid_tree["ddids"][ddid] = d
 
-    # add this to a yet-larger tree
-    obs_tree[key] = spw_tree
+        # add this to a yet-larger tree
+        obs_tree["obsids"][key] = ddid_tree
 
     # Create the ASDF file object from our data tree
     af = asdf.AsdfFile(obs_tree)
