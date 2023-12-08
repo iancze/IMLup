@@ -13,9 +13,10 @@ rule seed_data:
 rule baselines:
     input: "data/raw/imlup.asdf"
     output: "analysis/baselines.png"
-    shell: "python src/plot_baselines.py {output}"
+    shell: "python src/plot_baselines.py {input} {output}"
 
 # make a dirty image and compare to CLEAN
-# rule dirty_img_comparison:
-
-
+rule dirty_img:
+    input: "data/raw/imlup.asdf"
+    output: "analysis/dirty_image.png"
+    shell: "python src/dirty_image.py {input} {output}"

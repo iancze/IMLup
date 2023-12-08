@@ -1,11 +1,9 @@
 import asdf
 import numpy as np 
-import mpol
 import visread.process
+import argparse
 
-dfile = "/workspace/IMLup/mpol_analysis/data/raw/imlup.asdf"
-
-def get_basic_data():
+def get_basic_data(filename):
     """Load all of the data contained in the .asdf file, and convert it into 1D. 
     Destroys channel information.
     
@@ -18,7 +16,7 @@ def get_basic_data():
     uu_list = []
     vv_list = []
 
-    with asdf.open(dfile) as af:
+    with asdf.open(filename) as af:
         # print(af.info())
 
         # obsids contained in measurement set
@@ -70,7 +68,13 @@ def get_basic_data():
 
 
 def main():
-    uu, vv, data, weight = get_basic_data()
+    parser = argparse.ArgumentParser(
+        description="Load an .asdf file."
+    )
+    parser.add_argument("file", help="Path to asdf file") 
+    args = parser.parse_args()
+
+    uu, vv, data, weight = get_basic_data(args.file)
     print("uu", uu)
     print("vv", vv)
     print("data", data)

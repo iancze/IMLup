@@ -7,10 +7,11 @@ def main():
     parser = argparse.ArgumentParser(
         description="Plot the visibilities."
     )
+    parser.add_argument("file", help="Path to asdf file")
     parser.add_argument("outfile", help="Output file") 
     args = parser.parse_args()
     
-    uu, vv, data, weight = loaddata.get_basic_data()
+    uu, vv, data, weight = loaddata.get_basic_data(args.file)
     
     # augment to include complex conjugates
     uu = np.concatenate([uu, -uu])
