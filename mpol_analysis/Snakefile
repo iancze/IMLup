@@ -20,3 +20,7 @@ rule dirty_img:
     input: "data/raw/imlup.asdf"
     output: "analysis/dirty_image.png"
     shell: "python src/dirty_image.py {input} {output}"
+
+
+# start to SGD
+# python src/sgd.py data/raw/imlup.asdf --tensorboard-log-dir analysis/runs/exp1

@@ -9,9 +9,8 @@ from torch.utils.tensorboard import SummaryWriter
 
 # following structure from https://github.com/pytorch/examples/blob/main/mnist/main.py
 
-
-# create a model that uses the NuFFT to predict, following SimpleNet
-class SGDNet(torch.nn.Module):
+# create a model that uses the NuFFT to predict
+class Net(torch.nn.Module):
     def __init__(
         self,
         coords=None,
@@ -34,13 +33,10 @@ class SGDNet(torch.nn.Module):
         )
         self.nufft = fourier.NuFFT(coords=self.coords, nchan=self.nchan)
 
-    @classmethod
-    def from_image_properties(cls, cell_size, npix, nchan, base_cube):
-        coords = coordinates.GridCoords(cell_size, npix)
-        return cls(coords, nchan, base_cube)
-
     def forward(self, uu, vv):
         r"""
+        Predict visibilities at uu, vv.
+
         Feed forward to calculate the model visibilities. In this step, a :class:`~mpol.images.BaseCube` is fed to a :class:`~mpol.images.HannConvCube` is fed to a :class:`~mpol.images.ImageCube` is fed to a :class:`~mpol.fourier.NuFFT` to produce the model visibilities.
 
         Returns: 1D complex torch tensor of model visibilities.
@@ -52,87 +48,68 @@ class SGDNet(torch.nn.Module):
         return vis
 
 
-coords = coordinates.GridCoords(cell_size=0.005, npix=1028)
-rml = SGDNet(coords=coords)
-optimizer = torch.optim.SGD(rml.parameters(), lr=3e4)
-
-loss_tracker = []
-nepochs = 20
-for epoch in range(nepochs):
-    # mini-batches
-    for i, batch in enumerate(train_dloader):
-        uu, vv, data, weight = batch
-
-        rml.zero_grad()
-
-        # get the predicted visibilities for this batch
-        vis = rml(uu, vv)
-
-        # calculate a loss
-        loss = losses.nll(vis, data, weight)
-
-        loss_tracker.append(loss.item())
-        print("Epoch: {:} Batch: {:} Loss {:}".format(epoch, i, loss.item()))
-
-        writer.add_scalar("loss", loss.item(), i)
-
-        # calculate gradients of parameters
-        loss.backward()
-
-        # update the model parameters
-        optimizer.step()
-
-    # after training, compute the validation loss in batches
-    # for i, vbatch in enumerate(validation_dloader):
-    # pass
-
-
-def train(args, model, device, train_loader, optimizer, epoch):
+def train(args, model, device, train_loader, optimizer, epoch, writer):
     model.train()
-    for batch_idx, (data, target) in enumerate(train_loader):
-        data, target = data.to(device), target.to(device)
+    for i_batch, (uu, vv, data, weight) in enumerate(train_loader):
+        # send all values to device
+        uu, vv, data, weight = uu.to(device), vv.to(device), data.to(device), weight.to(device)
+        
         optimizer.zero_grad()
-        output = model(data)
-        loss = F.nll_loss(output, target)
+        # get model visibilities
+        vis = model(uu, vv)
+
+        # calculate loss
+        loss = losses.nll(vis, data, weight)
         loss.backward()
         optimizer.step()
-        if batch_idx % args.log_interval == 0:
-            print(
-                "Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}".format(
-                    epoch,
-                    batch_idx * len(data),
-                    len(train_loader.dataset),
-                    100.0 * batch_idx / len(train_loader),
-                    loss.item(),
-                )
-            )
+
+        # log results
+        if i_batch % args.log_interval == 0:
+            writer.add_scalar("loss", loss.item())
+            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
+                epoch, i_batch * len(data), len(train_loader.dataset),
+                100. * i_batch / len(train_loader), loss.item()))
             if args.dry_run:
                 break
 
+def validate(model, device, validate_loader):
+    model.eval()
+    validate_loss = 0
+    with torch.no_grad():
+        for (uu, vv, data, weight) in validate_loader:
+            # send all values to device
+            uu, vv, data, weight = uu.to(device), vv.to(device), data.to(device), weight.to(device)
+                    
+            # get model visibilities
+            vis = model(uu, vv)
 
-# we're looking at 3.4.4: https://d2l.ai/chapter_linear-regression/linear-regression-scratch.html#training
-# what is this doing?
-# for batch in self.val_dataloader:
-# with torch.no_grad():
-#     self.model.validation_step(self.prepare_batch(batch))
-# self.val_batch_idx += 1
+            # calculate loss as total over all chunks
+            validate_loss += losses.nll(vis, data, weight).item()  
+    
+    # re-normalize to total number of data points
+    validate_loss /= len(validate_loader.dataset)
+    return validate_loss
+
 
 
 def main():
     # Training settings
     parser = argparse.ArgumentParser(description="IM Lup SGD Example")
-    parser.add_argument("adsf", help="Input path to .asdf file containing visibilities.")
+    parser.add_argument("asdf", help="Input path to .asdf file containing visibilities.")
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=1000000,
+        default=100000,
         help="input batch size for training",
     )
     parser.add_argument(
-        "--test-batch-size",
+        "--validation-batch-size",
         type=int,
         default=100000,
-        help="input batch size for testing",
+        help="input batch size for validation",
+    )
+    parser.add_argument(
+        "--train-fraction", type=float, default=0.8, help="The fraction of the dataset to use for training. The remainder will be used for validation."
     )
     parser.add_argument(
         "--epochs",
@@ -171,18 +148,21 @@ def main():
         help="how many batches to wait before logging training status",
     )
     parser.add_argument(
-        "--save-model",
-        action="store_true",
-        default=False,
-        help="For Saving the current Model",
+        "--tensorboard-log-dir",
+        help="The log dir to which tensorboard files should be written."
+    )
+    parser.add_argument(
+        "--save-path",
+        help="Provide path to save the current model",
     )
     args = parser.parse_args()
 
+    # set seed
+    torch.manual_seed(args.seed)
+    
+    # set up the devices
     use_cuda = not args.no_cuda and torch.cuda.is_available()
     use_mps = not args.no_mps and torch.backends.mps.is_available()
-
-    torch.manual_seed(args.seed)
-
     if use_cuda:
         device = torch.device("cuda")
     elif use_mps:
@@ -190,26 +170,19 @@ def main():
     else:
         device = torch.device("cpu")
 
-    train_kwargs = {"batch_size": args.batch_size}
-    test_kwargs = {"batch_size": args.test_batch_size}
-    if use_cuda:
-        cuda_kwargs = {"num_workers": 1, "pin_memory": True, "shuffle": True}
-        train_kwargs.update(cuda_kwargs)
-        test_kwargs.update(cuda_kwargs)
-
-    fname = "imlup.asdf"
-    uu, vv, data, weight = loaddata.get_basic_data(fname)
+    # load the full dataset
+    uu, vv, data, weight = loaddata.get_basic_data(args.asdf)
 
     nvis = len(uu)
     print("Number of Visibility Points:", nvis)
     # 42 million
 
-    # create indicies for each data point
-    train_frac = 0.8
+    # split the dataset into train / test by creating a list of indices
+    assert (args.train_fraction > 0) and (args.train_fraction < 1), "--train-fraction must be greater than 0 and less than 1.0. You provided {}".format(args.train_fraction)
     full_indices = np.arange(len(uu))
 
     # randomly split into train and validation sets
-    train_size = round(len(uu) * train_frac)
+    train_size = round(len(uu) * args.train_fraction)
     rng = np.random.default_rng()
     train_indices = rng.choice(full_indices, size=train_size, replace=False)
     validation_indices = np.setdiff1d(full_indices, train_indices)
@@ -227,27 +200,44 @@ def main():
     train_dataset = init_dataset(train_indices)
     validation_dataset = init_dataset(validation_indices)
 
-    # create a DataLoader to feed batches of Dataset
-    n_batches_per_dataset = 1000
-    import math
+    # set the batch sizes for the loaders
+    train_kwargs = {"batch_size": args.batch_size}
+    validation_kwargs = {"batch_size": args.validation_batch_size}
+    if use_cuda:
+        cuda_kwargs = {"num_workers": 1, "pin_memory": True, "shuffle": True}
+        train_kwargs.update(cuda_kwargs)
+        validation_kwargs.update(cuda_kwargs)
 
-    batch_size = math.ceil(nvis / n_batches_per_dataset)
-    print("Batch size", batch_size)
-    train_dloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    validation_dloader = DataLoader(
-        validation_dataset, batch_size=batch_size, shuffle=True
+    train_loader = DataLoader(train_dataset, **train_kwargs)
+    validation_loader = DataLoader(
+        validation_dataset, **validation_kwargs
     )
 
+    # create the model and send to device
+    coords = coordinates.GridCoords(cell_size=0.005, npix=1028)
+    model = Net(coords).to(device)
+
+    # create optimizer
+    optimizer = torch.optim.SGD(model.parameters(), lr=args.lr)
+    # here is where we could set up a scheduler, if desired
+
     # set up TensorBoard instance
-    writer = SummaryWriter()
+    writer = SummaryWriter(log_dir=args.tensorboard_log_dir)
+
+    # enter the loop
+    for epoch in range(1, args.epochs + 1):
+        train(args, model, device, train_loader, optimizer, epoch, writer)
+        vloss_avg = validate(model, device, validation_loader)
+        writer.add_scalar("vloss_avg", vloss_avg)
+        optimizer.step()
+
+    if args.save_path is not None:
+        torch.save(model.state_dict(), args.save_path)
+
 
     # TODO: see how long NuFFT scales with number of data points, on CPU and GPU
     # TODO: see what the variation in number of baselines / dirty image is for each batch... is it informative?
-    # TODO: how many epochs do we need to converge to something reasonable?
-    # TODO: potentially investigate multi-core data-loader + parallelism for CPUs
-
-    writer.add_image("images", grid, 0)
-    writer.add_graph(model, images)
+    
     writer.close()
 
 
