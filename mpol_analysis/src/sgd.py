@@ -5,7 +5,7 @@ import argparse
 import matplotlib.colors as mco
 import matplotlib.pyplot as plt
 from torch.utils.data import TensorDataset, DataLoader
-from mpol import coordinates, fourier, images, losses, utils, plot
+from mpol import coordinates, gridding, fourier, images, losses, utils, plot
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -86,13 +86,77 @@ def plots(model, step, writer):
     plot.plot_image(b_grad, extent=model.coords.img_ext, norm=norm_sym, ax=ax, cmap="bwr_r")
     writer.add_figure("b_grad", fig, step)
 
-# plot the dirty image of *all* the residuals (need NuFFT predict all mem-efficient)
+def plot_baselines(step, writer):
+    pass
+
+def residual_dirty_image(coords, model_vis, uu, vv, data, weight, step, writer):
+    # calculate residual dirty image for this *batch*
+    resid = data - model_vis
+
+    # convert all quantities to numpy arrays 
+    uu = utils.torch2npy(uu)
+    vv = utils.torch2npy(vv)
+    resid = np.squeeze(utils.torch2npy(resid))
+    weight = utils.torch2npy(weight)
+    # print(uu.shape, vv.shape, resid.shape, weight.shape)
+    imager = gridding.DirtyImager(coords=coords, uu=uu, vv=vv, weight=weight, data_re=np.real(resid), data_im=np.imag(resid))
+    img, beam = imager.get_dirty_image(weighting="briggs", robust=0.0, check_visibility_scatter=False)
+
+    # plot the two
+    # set plot dimensions
+    xx = 8 # in
+    cax_width = 0.2 # in 
+    cax_sep = 0.1 # in
+    mmargin = 1.2
+    lmargin = 0.7
+    rmargin = 0.9
+    tmargin = 0.3
+    bmargin = 0.5
+
+    npanels = 2
+    # the size of image axes + cax_sep + cax_width
+    block_width = (xx - lmargin - rmargin - mmargin * (npanels - 1) )/npanels
+    ax_width = block_width - cax_width - cax_sep
+    ax_height = ax_width 
+    yy = bmargin + ax_height + tmargin
+    
+    kw = {"origin": "lower", "interpolation": "none", "extent": imager.coords.img_ext, "cmap":"inferno"}
+
+    fig = plt.figure(figsize=(xx, yy))
+    ax = []
+    cax = []
+    for i in range(npanels):
+        ax.append(fig.add_axes([(lmargin + i * (block_width + mmargin))/xx, bmargin/yy, ax_width/xx, ax_height/yy]))
+        cax.append(fig.add_axes([(lmargin + i * (block_width + mmargin) + ax_width + cax_sep)/xx, bmargin/yy, cax_width/xx, ax_height/yy]))
+
+    # single-channel image cube    
+    chan = 0
+
+    im_beam = ax[0].imshow(beam[chan], **kw)
+    cbar = plt.colorbar(im_beam, cax=cax[0])
+    ax[0].set_title("beam")
+    # zoom in a bit
+    r = 0.3
+    ax[0].set_xlim(r, -r)
+    ax[0].set_ylim(-r, r)
+
+    im = ax[1].imshow(img[chan], **kw)
+    ax[1].set_title("dirty image")
+    cbar = plt.colorbar(im, cax=cax[1])
+    cbar.set_label(r"Jy/beam")
+
+    for a in ax:
+        a.set_xlabel(r"$\Delta \alpha \cos \delta$ [${}^{\prime\prime}$]")
+        a.set_ylabel(r"$\Delta \delta$ [${}^{\prime\prime}$]")
+
+    writer.add_figure("dirty_image", fig, step)
+
 # plot histogram of residuals normalized to weight
 
+# move to per-EB batching... always choose antennas from the same EB, then possibly fewer within that
+# model will need to move to one that includes a key to index the amplitude and/or weight rescaling
 
 # plot the baseline distribution of the batch samples (potentially more relevant with inter-EB switching)
-# plot base image (maybe better param)
-
 
 # can train on just long baselines, just short baselines, etc, and see what happens to the model and residuals.
 
@@ -131,6 +195,7 @@ def train(args, model, device, train_loader, optimizer, epoch, writer):
             step = i_batch + epoch * len(train_loader)
             writer.add_scalar("loss", loss.item(), step)
             plots(model, step, writer)
+            residual_dirty_image(model.coords, vis, uu, vv, data, weight, step, writer)
             if args.dry_run:
                 break
 
@@ -320,7 +385,6 @@ def main():
             args.save_checkpoint,
         )
 
-    # TODO: see how long NuFFT scales with number of data points, on CPU and GPU
     # TODO: see what the variation in number of baselines / dirty image is for each batch... is it informative?
 
     writer.close()
