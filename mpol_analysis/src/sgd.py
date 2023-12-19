@@ -2,12 +2,15 @@ import numpy as np
 import loaddata
 import torch
 import argparse
+import matplotlib.colors as mco
+import matplotlib.pyplot as plt
 from torch.utils.data import TensorDataset, DataLoader
-from mpol import coordinates, fourier, images, losses
+from mpol import coordinates, fourier, images, losses, utils, plot
 
 from torch.utils.tensorboard import SummaryWriter
 
 # following structure from https://github.com/pytorch/examples/blob/main/mnist/main.py
+
 
 # create a model that uses the NuFFT to predict
 class Net(torch.nn.Module):
@@ -48,12 +51,62 @@ class Net(torch.nn.Module):
         return vis
 
 
+def plots(model, step, writer):
+    """
+    Plot images to the Tensorboard instance.
+    """
+
+    r = 1
+    img = np.squeeze(utils.torch2npy(model.icube.sky_cube))
+    fig, ax = plt.subplots(nrows=1)
+    plot.plot_image(img, extent=model.coords.img_ext, ax=ax)
+    # set zoom a little
+    ax.set_xlim(r, -r)
+    ax.set_ylim(-r, r)
+    writer.add_figure("image", fig, step)
+
+    norm_asinh = plot.get_image_cmap_norm(img, stretch='asinh')
+    fig, ax = plt.subplots(nrows=1)
+    plot.plot_image(img, extent=model.coords.img_ext, norm=norm_asinh, ax=ax)
+    # set zoom a little
+    ax.set_xlim(r, -r)
+    ax.set_ylim(-r, r)
+    writer.add_figure("asinh", fig, step)
+
+    bcube = np.squeeze(utils.torch2npy(utils.packed_cube_to_sky_cube(model.bcube.base_cube)))
+    norm = mco.Normalize(vmin=np.min(bcube), vmax=np.max(bcube))
+    fig, ax = plt.subplots(nrows=1)
+    plot.plot_image(bcube, extent=model.coords.img_ext, ax=ax, norm=norm)
+    writer.add_figure("bcube", fig, step)
+
+    # get gradient as it exists on model from root node
+    b_grad = np.squeeze(utils.torch2npy(utils.packed_cube_to_sky_cube(model.bcube.base_cube.grad)))
+    norm_sym = plot.get_image_cmap_norm(b_grad, symmetric=True)
+    fig, ax = plt.subplots(nrows=1)
+    plot.plot_image(b_grad, extent=model.coords.img_ext, norm=norm_sym, ax=ax, cmap="bwr_r")
+    writer.add_figure("b_grad", fig, step)
+
+# plot the dirty image of *all* the residuals (need NuFFT predict all mem-efficient)
+# plot histogram of residuals normalized to weight
+
+
+# plot the baseline distribution of the batch samples (potentially more relevant with inter-EB switching)
+# plot base image (maybe better param)
+
+
+# can train on just long baselines, just short baselines, etc, and see what happens to the model and residuals.
+
 def train(args, model, device, train_loader, optimizer, epoch, writer):
     model.train()
     for i_batch, (uu, vv, data, weight) in enumerate(train_loader):
         # send all values to device
-        uu, vv, data, weight = uu.to(device), vv.to(device), data.to(device), weight.to(device)
-        
+        uu, vv, data, weight = (
+            uu.to(device),
+            vv.to(device),
+            data.to(device),
+            weight.to(device),
+        )
+
         optimizer.zero_grad()
         # get model visibilities
         vis = model(uu, vv)
@@ -65,37 +118,54 @@ def train(args, model, device, train_loader, optimizer, epoch, writer):
 
         # log results
         if i_batch % args.log_interval == 0:
-            writer.add_scalar("loss", loss.item())
-            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
-                epoch, i_batch * len(data), len(train_loader.dataset),
-                100. * i_batch / len(train_loader), loss.item()))
+            print(
+                "Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}".format(
+                    epoch,
+                    i_batch * len(data),
+                    len(train_loader.dataset),
+                    100.0 * i_batch / len(train_loader),
+                    loss.item(),
+                )
+            )
+
+            step = i_batch + epoch * len(train_loader)
+            writer.add_scalar("loss", loss.item(), step)
+            plots(model, step, writer)
             if args.dry_run:
                 break
+
 
 def validate(model, device, validate_loader):
     model.eval()
     validate_loss = 0
+    # speed up calculation by disabling gradients
     with torch.no_grad():
-        for (uu, vv, data, weight) in validate_loader:
+        for uu, vv, data, weight in validate_loader:
             # send all values to device
-            uu, vv, data, weight = uu.to(device), vv.to(device), data.to(device), weight.to(device)
-                    
+            uu, vv, data, weight = (
+                uu.to(device),
+                vv.to(device),
+                data.to(device),
+                weight.to(device),
+            )
+
             # get model visibilities
             vis = model(uu, vv)
 
             # calculate loss as total over all chunks
-            validate_loss += losses.nll(vis, data, weight).item()  
-    
+            validate_loss += losses.nll(vis, data, weight).item()
+
     # re-normalize to total number of data points
     validate_loss /= len(validate_loader.dataset)
     return validate_loss
 
 
-
 def main():
     # Training settings
     parser = argparse.ArgumentParser(description="IM Lup SGD Example")
-    parser.add_argument("asdf", help="Input path to .asdf file containing visibilities.")
+    parser.add_argument(
+        "asdf", help="Input path to .asdf file containing visibilities."
+    )
     parser.add_argument(
         "--batch-size",
         type=int,
@@ -109,12 +179,15 @@ def main():
         help="input batch size for validation",
     )
     parser.add_argument(
-        "--train-fraction", type=float, default=0.8, help="The fraction of the dataset to use for training. The remainder will be used for validation."
+        "--train-fraction",
+        type=float,
+        default=0.8,
+        help="The fraction of the dataset to use for training. The remainder will be used for validation.",
     )
     parser.add_argument(
         "--epochs",
         type=int,
-        default=14,
+        default=5,
         help="number of epochs to train",
     )
     parser.add_argument(
@@ -138,9 +211,7 @@ def main():
         default=False,
         help="quickly check a single pass",
     )
-    parser.add_argument(
-        "--seed", type=int, default=1, help="random seed"
-    )
+    parser.add_argument("--seed", type=int, default=1, help="random seed")
     parser.add_argument(
         "--log-interval",
         type=int,
@@ -149,17 +220,19 @@ def main():
     )
     parser.add_argument(
         "--tensorboard-log-dir",
-        help="The log dir to which tensorboard files should be written."
+        help="The log dir to which tensorboard files should be written.",
     )
+    parser.add_argument("--load-checkpoint", help="Path to checkpoint from which to resume.")
     parser.add_argument(
-        "--save-path",
-        help="Provide path to save the current model",
+        "--save-checkpoint",
+        help="Path to which checkpoint where finished model and optimizer state should be saved.",
     )
+    
     args = parser.parse_args()
 
     # set seed
     torch.manual_seed(args.seed)
-    
+
     # set up the devices
     use_cuda = not args.no_cuda and torch.cuda.is_available()
     use_mps = not args.no_mps and torch.backends.mps.is_available()
@@ -178,7 +251,11 @@ def main():
     # 42 million
 
     # split the dataset into train / test by creating a list of indices
-    assert (args.train_fraction > 0) and (args.train_fraction < 1), "--train-fraction must be greater than 0 and less than 1.0. You provided {}".format(args.train_fraction)
+    assert (args.train_fraction > 0) and (
+        args.train_fraction < 1
+    ), "--train-fraction must be greater than 0 and less than 1.0. You provided {}".format(
+        args.train_fraction
+    )
     full_indices = np.arange(len(uu))
 
     # randomly split into train and validation sets
@@ -209,9 +286,7 @@ def main():
         validation_kwargs.update(cuda_kwargs)
 
     train_loader = DataLoader(train_dataset, **train_kwargs)
-    validation_loader = DataLoader(
-        validation_dataset, **validation_kwargs
-    )
+    validation_loader = DataLoader(validation_dataset, **validation_kwargs)
 
     # create the model and send to device
     coords = coordinates.GridCoords(cell_size=0.005, npix=1028)
@@ -221,23 +296,33 @@ def main():
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr)
     # here is where we could set up a scheduler, if desired
 
+    if args.load_checkpoint is not None:
+        checkpoint = torch.load(args.load_checkpoint)
+        model.load_state_dict(checkpoint["model_state_dict"])
+
     # set up TensorBoard instance
     writer = SummaryWriter(log_dir=args.tensorboard_log_dir)
 
     # enter the loop
-    for epoch in range(1, args.epochs + 1):
+    for epoch in range(0, args.epochs):
         train(args, model, device, train_loader, optimizer, epoch, writer)
         vloss_avg = validate(model, device, validation_loader)
-        writer.add_scalar("vloss_avg", vloss_avg)
+        print("Logging validation")
+        writer.add_scalar("vloss_avg", vloss_avg, epoch)
         optimizer.step()
 
-    if args.save_path is not None:
-        torch.save(model.state_dict(), args.save_path)
-
+    # save checkpoint
+    if args.save_checkpoint is not None:
+        torch.save(
+            {
+                "model_state_dict": model.state_dict(),
+            },
+            args.save_checkpoint,
+        )
 
     # TODO: see how long NuFFT scales with number of data points, on CPU and GPU
     # TODO: see what the variation in number of baselines / dirty image is for each batch... is it informative?
-    
+
     writer.close()
 
 

@@ -1,6 +1,7 @@
 # Analysis output
 casa_analysis/data
 mpol_analysis/data
+mpol_analysis/analysis
 
 # Snakemake
 .snakemake

@@ -23,4 +23,8 @@ rule dirty_img:
 
 
 # start to SGD
-# python src/sgd.py data/raw/imlup.asdf --tensorboard-log-dir analysis/runs/exp1
+# python src/sgd.py data/raw/imlup.asdf --lr 10 --batch-size 50000 --tensorboard-log-dir analysis/runs/exp1 --epochs 2 --save-checkpoint analysis/checkpoints/checkpoint.pt
+# python src/sgd.py data/raw/imlup.asdf --lr 10 --batch-size 50000 --tensorboard-log-dir analysis/runs/exp2 --epochs 3 --load-checkpoint analysis/checkpoint.pt --save-checkpoint analysis/checkpoints//checkpoint2.pt 
+# python src/sgd.py data/raw/imlup.asdf --lr 30 --batch-size 50000 --tensorboard-log-dir analysis/runs/exp3 --epochs 3 --load-checkpoint analysis/checkpoints/checkpoint2.pt --save-checkpoint analysis/checkpoints/checkpoint3.pt 
+# python src/sgd.py data/raw/imlup.asdf --lr 100 --batch-size 50000 --tensorboard-log-dir analysis/runs/exp4 --epochs 3 --load-checkpoint analysis/checkpoints/checkpoint3.pt --save-checkpoint analysis/checkpoints/checkpoint4.pt 
+
