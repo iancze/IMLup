@@ -4,7 +4,7 @@ import torch
 import argparse
 import matplotlib.colors as mco
 import matplotlib.pyplot as plt
-from torch.utils.data import TensorDataset, DataLoader
+from torch.utils.data import TensorDataset, DataLoader, Sampler
 from mpol import coordinates, gridding, fourier, images, losses, utils, plot
 
 from torch.utils.tensorboard import SummaryWriter
@@ -49,6 +49,44 @@ class Net(torch.nn.Module):
         x = self.icube(x)
         vis = self.nufft(x, uu, vv)
         return vis
+
+
+class DdidBatchSampler(Sampler):
+    """
+    Custom Sampler to gather mini-batches having the same ddid (usually corresponds to a unique spw for a unique obs id).
+    """
+    def __init__(self, ddids, batch_size, shuffle=True):
+        self.ddids = ddids
+        self.ids = np.arange(len(ddids))
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        
+        self.unique_ddids = np.unique(self.ddids)
+
+        # calculate how many batches we will have for each ddid sub-group
+        self.batches_per_ddid = {}
+        for ddid in self.unique_ddids:
+            # find all indices with ddid match
+            ids_ddid = self.ids[(self.ddids == ddid)]
+            # calculate the length
+            nbatches = (len(ids_ddid) + self.batch_size - 1) // self.batch_size
+            self.batches_per_ddid[ddid] = nbatches
+
+    def __len__(self):
+        "returns the number of batches to cover all the data"
+        return np.sum([b for b in self.batches_per_ddid.values()])
+
+    def __iter__(self):
+        if self.shuffle:
+            rng = np.random.default_rng()
+            rng.shuffle(self.unique_ddids)
+
+        for ddid in self.unique_ddids:
+            # find all indices with ddid match
+            ids_ddid = self.ids[(self.ddids == ddid)]
+
+            for batch in torch.chunk(torch.tensor(ids_ddid), self.batches_per_ddid[ddid]):
+                yield batch.tolist()
 
 
 def plots(model, step, writer):
@@ -162,13 +200,14 @@ def residual_dirty_image(coords, model_vis, uu, vv, data, weight, step, writer):
 
 def train(args, model, device, train_loader, optimizer, epoch, writer):
     model.train()
-    for i_batch, (uu, vv, data, weight) in enumerate(train_loader):
+    for i_batch, (uu, vv, data, weight, ddid) in enumerate(train_loader):
         # send all values to device
-        uu, vv, data, weight = (
+        uu, vv, data, weight, ddid = (
             uu.to(device),
             vv.to(device),
             data.to(device),
             weight.to(device),
+            ddid.to(device)
         )
 
         optimizer.zero_grad()
@@ -205,13 +244,14 @@ def validate(model, device, validate_loader):
     validate_loss = 0
     # speed up calculation by disabling gradients
     with torch.no_grad():
-        for uu, vv, data, weight in validate_loader:
+        for uu, vv, data, weight, ddid in validate_loader:
             # send all values to device
-            uu, vv, data, weight = (
+            uu, vv, data, weight, ddid = (
                 uu.to(device),
                 vv.to(device),
                 data.to(device),
                 weight.to(device),
+                ddid.to(device)
             )
 
             # get model visibilities
@@ -292,7 +332,7 @@ def main():
         "--save-checkpoint",
         help="Path to which checkpoint where finished model and optimizer state should be saved.",
     )
-    
+    parser.add_argument("--sampler", choices=["default", "ddid"], default="default")
     args = parser.parse_args()
 
     # set seed
@@ -309,7 +349,7 @@ def main():
         device = torch.device("cpu")
 
     # load the full dataset
-    uu, vv, data, weight = loaddata.get_basic_data(args.asdf)
+    uu, vv, data, weight, ddid = loaddata.get_ddid_data(args.asdf)
 
     nvis = len(uu)
     print("Number of Visibility Points:", nvis)
@@ -337,21 +377,30 @@ def main():
             torch.tensor(vv[indices]),
             torch.tensor(data[indices]),
             torch.tensor(weight[indices]),
+            torch.tensor(ddid[indices])
         )
 
     train_dataset = init_dataset(train_indices)
     validation_dataset = init_dataset(validation_indices)
 
     # set the batch sizes for the loaders
-    train_kwargs = {"batch_size": args.batch_size}
-    validation_kwargs = {"batch_size": args.validation_batch_size}
     if use_cuda:
-        cuda_kwargs = {"num_workers": 1, "pin_memory": True, "shuffle": True}
-        train_kwargs.update(cuda_kwargs)
-        validation_kwargs.update(cuda_kwargs)
+        cuda_kwargs = {"num_workers": 1, "pin_memory": True}
+    else:
+        cuda_kwargs = {}    
+    
+    if args.sampler == "default":
+        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, **cuda_kwargs)
+        validation_loader = DataLoader(validation_dataset, batch_size=args.validation_batch_size, shuffle=True, **cuda_kwargs)
 
-    train_loader = DataLoader(train_dataset, **train_kwargs)
-    validation_loader = DataLoader(validation_dataset, **validation_kwargs)
+    elif args.sampler == "ddid":
+        train_ddids = ddid[train_indices]
+        train_sampler = DdidBatchSampler(train_ddids, args.batch_size)
+        train_loader = DataLoader(train_dataset, batch_sampler=train_sampler, **cuda_kwargs)
+
+        validation_ddids = ddid[validation_indices]
+        validation_sampler = DdidBatchSampler(validation_ddids, args.validation_batch_size)
+        validation_loader = DataLoader(validation_dataset, batch_sampler=validation_sampler, **cuda_kwargs)
 
     # create the model and send to device
     coords = coordinates.GridCoords(cell_size=0.005, npix=1028)

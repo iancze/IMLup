@@ -29,3 +29,8 @@ rule dirty_img:
 # python src/sgd.py data/raw/imlup.asdf --lr 100 --batch-size 50000 --tensorboard-log-dir analysis/runs/exp5 --epochs 3 --load-checkpoint analysis/checkpoints/checkpoint4.pt --save-checkpoint analysis/checkpoints/checkpoint5.pt --log-interval 100
 # python src/sgd.py data/raw/imlup.asdf --lr 300 --batch-size 50000 --tensorboard-log-dir analysis/runs/exp6 --epochs 3 --load-checkpoint analysis/checkpoints/checkpoint5.pt --save-checkpoint analysis/checkpoints/checkpoint6.pt --log-interval 100
 
+# python src/sgd.py data/raw/imlup.asdf --lr 300 --batch-size 50000 --tensorboard-log-dir analysis/runs/exp7 --epochs 3 --load-checkpoint analysis/checkpoints/checkpoint6.pt --save-checkpoint analysis/checkpoints/checkpoint7.pt --log-interval 10 --sampler ddid
+
+
+# testing EB
+# python src/eb_dataloader.py data/raw/imlup.asdf 

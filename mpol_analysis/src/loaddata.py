@@ -122,7 +122,7 @@ def get_ddid_data(filename):
                 vv_list.append(vv.flatten())
                 data_list.append(data.flatten())
                 weight_list.append(weight.flatten())
-                ddid_list.append(ddid * np.ones_like(uu.flatten(), dtype=np.int))
+                ddid_list.append(ddid * np.ones_like(uu.flatten(), dtype=np.int64))
 
 
     # concatenate all files at the end
