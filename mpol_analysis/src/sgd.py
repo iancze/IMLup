@@ -6,10 +6,19 @@ import matplotlib.colors as mco
 import matplotlib.pyplot as plt
 from torch.utils.data import TensorDataset, DataLoader, Sampler
 from mpol import coordinates, gridding, fourier, images, losses, utils, plot
+import visread
+import visread.visualization
 
 from torch.utils.tensorboard import SummaryWriter
 
 # following structure from https://github.com/pytorch/examples/blob/main/mnist/main.py
+
+# create our new loss function
+def log_likelihood_avg_loss(model_vis, data_vis, weight):
+    N = len(torch.ravel(data_vis))
+    log_likelihood = losses.log_likelihood(model_vis, data_vis, weight)
+    # factor of 2 from complex-valued data
+    return log_likelihood/(2 * N)
 
 
 # create a model that uses the NuFFT to predict
@@ -22,6 +31,7 @@ class Net(torch.nn.Module):
     ):
         super().__init__()
 
+        # these should be saved as registered variables, so they are serialized on save
         self.coords = coords
         self.nchan = nchan
 
@@ -124,6 +134,12 @@ def plots(model, step, writer):
     plot.plot_image(b_grad, extent=model.coords.img_ext, norm=norm_sym, ax=ax, cmap="bwr_r")
     writer.add_figure("b_grad", fig, step)
 
+
+# plot fourier cube (amplitudes and phases)
+def plot_fourier_cube():
+    pass
+
+
 def plot_baselines(step, writer):
     pass
 
@@ -173,8 +189,8 @@ def residual_dirty_image(coords, model_vis, uu, vv, data, weight, step, writer):
     im_beam = ax[0].imshow(beam[chan], **kw)
     cbar = plt.colorbar(im_beam, cax=cax[0])
     ax[0].set_title("beam")
-    # zoom in a bit
-    r = 0.3
+    # zoom in a bit on the beam
+    r = 0.4
     ax[0].set_xlim(r, -r)
     ax[0].set_ylim(-r, r)
 
@@ -190,9 +206,24 @@ def residual_dirty_image(coords, model_vis, uu, vv, data, weight, step, writer):
     writer.add_figure("dirty_image", fig, step)
 
 # plot histogram of residuals normalized to weight
+def plot_residual_histogram(model_vis, data, weight, ddid, step, writer):
+    # convert all quantities to numpy arrays 
+    model_vis = utils.torch2npy(torch.squeeze(model_vis))
+    data = utils.torch2npy(torch.squeeze(data))
+    weight = utils.torch2npy(torch.squeeze(weight))
 
-# move to per-EB batching... always choose antennas from the same EB, then possibly fewer within that
+    ddid = utils.torch2npy(ddid)
+    unique_ddid = np.unique(ddid)
+
+    # compute normalized scatter 
+    scatter = visread.scatter.get_averaged_scatter(data, model_vis, weight)
+    fig = visread.visualization.plot_averaged_scatter(scatter)
+    fig.suptitle(unique_ddid)
+
+    writer.add_figure("residual_scatter", fig, step)
+
 # model will need to move to one that includes a key to index the amplitude and/or weight rescaling
+# or at least a dictionary that can look up obsid from ddid
 
 # plot the baseline distribution of the batch samples (potentially more relevant with inter-EB switching)
 
@@ -235,6 +266,7 @@ def train(args, model, device, train_loader, optimizer, epoch, writer):
             writer.add_scalar("loss", loss.item(), step)
             plots(model, step, writer)
             residual_dirty_image(model.coords, vis, uu, vv, data, weight, step, writer)
+            plot_residual_histogram(vis, data, weight, ddid, step, writer)
             if args.dry_run:
                 break
 
@@ -333,6 +365,7 @@ def main():
         help="Path to which checkpoint where finished model and optimizer state should be saved.",
     )
     parser.add_argument("--sampler", choices=["default", "ddid"], default="default")
+    parser.add_argument("--sb_only", action="store_true", default=False)
     args = parser.parse_args()
 
     # set seed
@@ -349,7 +382,7 @@ def main():
         device = torch.device("cpu")
 
     # load the full dataset
-    uu, vv, data, weight, ddid = loaddata.get_ddid_data(args.asdf)
+    uu, vv, data, weight, ddid = loaddata.get_ddid_data(args.asdf, args.sb_only)
 
     nvis = len(uu)
     print("Number of Visibility Points:", nvis)

@@ -66,7 +66,7 @@ def get_basic_data(filename):
 
     return uu, vv, data, weight
 
-def get_ddid_data(filename):
+def get_ddid_data(filename, sb_only=False):
     """Load all of the data contained in the .asdf file, and convert it into 1D. 
     Provides ddid argument, too.
     Destroys channel information.
@@ -87,6 +87,9 @@ def get_ddid_data(filename):
         # obsids contained in measurement set
         obsids = af["obsids"].keys()
         for obsid in obsids:
+
+            if sb_only and (obsid > 4):
+                continue
             # ddids contained in each obsid
             ddids = af["obsids"][obsid]["ddids"].keys()
             for ddid in ddids:
@@ -123,6 +126,8 @@ def get_ddid_data(filename):
                 data_list.append(data.flatten())
                 weight_list.append(weight.flatten())
                 ddid_list.append(ddid * np.ones_like(uu.flatten(), dtype=np.int64))
+            
+
 
 
     # concatenate all files at the end
