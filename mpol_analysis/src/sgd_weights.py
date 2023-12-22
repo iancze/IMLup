@@ -5,7 +5,7 @@ import argparse
 import matplotlib.colors as mco
 import matplotlib.pyplot as plt
 from torch.utils.data import TensorDataset, DataLoader, Sampler
-from mpol import coordinates, gridding, fourier, images, losses, utils, plot
+from mpol import coordinates, gridding, fourier, images, utils, plot
 import visread
 import visread.visualization
 
@@ -14,12 +14,23 @@ from torch.utils.tensorboard import SummaryWriter
 # following structure from https://github.com/pytorch/examples/blob/main/mnist/main.py
 
 # create our new loss function
-def log_likelihood_avg_loss(model_vis, data_vis, weight):
-    N = len(torch.ravel(data_vis))
-    log_likelihood = losses.log_likelihood(model_vis, data_vis, weight)
-    # factor of 2 from complex-valued data
-    return log_likelihood/(2 * N)
+def log_likelihood(model_vis, data_vis, weight):
+    # asssumes tensors are the same shape
+    N = len(torch.ravel(data_vis)) # number of complex visibilities
+    resid = data_vis - model_vis
 
+    # derivation from real and imag in notebook
+    return - N * np.log(2 * np.pi) + torch.sum(torch.log(weight)) - 0.5 * torch.sum(weight * torch.abs(resid)**2)
+
+def neg_log_likelihood_avg(model_vis, data_vis, weight):
+    N = len(torch.ravel(data_vis)) # number of complex visibilities
+    ll = log_likelihood(model_vis, data_vis, weight)
+    # factor of 2 is because of complex calculation
+    return - ll / (2 * N)
+
+
+# hand this a dictionary that contains the obsid as keys and ddid as lists in those
+# the routine will look 
 
 # create a model that uses the NuFFT to predict
 class Net(torch.nn.Module):
@@ -27,13 +38,30 @@ class Net(torch.nn.Module):
         self,
         coords=None,
         nchan=1,
+        obsid_dict=None,
         base_cube=None,
+        freeze_weights=False,
     ):
         super().__init__()
 
         # these should be saved as registered variables, so they are serialized on save
         self.coords = coords
         self.nchan = nchan
+
+        # create parameters that store weights
+        
+        # assumes ddids indexed from 0
+        # mapping from ddid to obsid
+        ddid2obsid = []
+        for obsid, ddids in obsid_dict.items():
+            for ddid in ddids:
+                ddid2obsid.append(obsid)
+        
+        # use this for amplitude and astrometric offsets 
+        self.register_buffer("ddid2obsid", torch.tensor(ddid2obsid))
+
+        # one for each ddid
+        self.log10_sigma_factors = torch.nn.Parameter(torch.zeros(len(ddid2obsid)), requires_grad=(not freeze_weights))
 
         self.bcube = images.BaseCube(
             coords=self.coords, nchan=self.nchan, base_cube=base_cube
@@ -45,6 +73,18 @@ class Net(torch.nn.Module):
             coords=self.coords, nchan=self.nchan, passthrough=True
         )
         self.nufft = fourier.NuFFT(coords=self.coords, nchan=self.nchan)
+
+
+    def adjust_weights(self, ddid, weight):
+        r"""
+        Adjust the weights according to the rescale factor on the parameter.
+        """
+
+        # get the obsID that corresponds to all ddid
+        # obsid = self.ddid2obsid[ddid]
+        log10_sigma_factors = self.log10_sigma_factors[ddid]
+        
+        return weight / (10**log10_sigma_factors)**2
 
     def forward(self, uu, vv):
         r"""
@@ -134,14 +174,6 @@ def plots(model, step, writer):
     plot.plot_image(b_grad, extent=model.coords.img_ext, norm=norm_sym, ax=ax, cmap="bwr_r")
     writer.add_figure("b_grad", fig, step)
 
-
-# plot fourier cube (amplitudes and phases)
-def plot_fourier_cube():
-    pass
-
-
-def plot_baselines(step, writer):
-    pass
 
 def residual_dirty_image(coords, model_vis, uu, vv, data, weight, step, writer):
     # calculate residual dirty image for this *batch*
@@ -245,10 +277,14 @@ def train(args, model, device, train_loader, optimizer, epoch, writer):
         # get model visibilities
         vis = model(uu, vv)
 
-        # calculate loss
-        loss = losses.nll(vis, data, weight)
+        # correct the weights
+        weight_adjusted = model.adjust_weights(ddid, weight)
+
+        # calculate loss using adjusted weights
+        loss = neg_log_likelihood_avg(vis, data, weight_adjusted)
         loss.backward()
         optimizer.step()
+        
 
         # log results
         if i_batch % args.log_interval == 0:
@@ -264,9 +300,11 @@ def train(args, model, device, train_loader, optimizer, epoch, writer):
 
             step = i_batch + epoch * len(train_loader)
             writer.add_scalar("loss", loss.item(), step)
+            sigma_dict = {str(obsid):10**val.item() for obsid, val in enumerate(model.log10_sigma_factors)}
+            writer.add_scalars("sigma_scale_factors", sigma_dict, step)
             plots(model, step, writer)
-            residual_dirty_image(model.coords, vis, uu, vv, data, weight, step, writer)
-            plot_residual_histogram(vis, data, weight, ddid, step, writer)
+            residual_dirty_image(model.coords, vis, uu, vv, data, weight_adjusted, step, writer)
+            plot_residual_histogram(vis, data, weight_adjusted, ddid, step, writer)
             if args.dry_run:
                 break
 
@@ -289,8 +327,11 @@ def validate(model, device, validate_loader):
             # get model visibilities
             vis = model(uu, vv)
 
+            # correct the weights
+            weight_adjusted = model.adjust_weights(ddid, weight)
+
             # calculate loss as total over all chunks
-            validate_loss += losses.nll(vis, data, weight).item()
+            validate_loss += neg_log_likelihood_avg(vis, data, weight_adjusted).item()
 
     # re-normalize to total number of data points
     validate_loss /= len(validate_loader.dataset)
@@ -366,6 +407,7 @@ def main():
     )
     parser.add_argument("--sampler", choices=["default", "ddid"], default="default")
     parser.add_argument("--sb_only", action="store_true", default=False)
+    parser.add_argument("--freeze_weights", action="store_true")
     args = parser.parse_args()
 
     # set seed
@@ -436,8 +478,14 @@ def main():
         validation_loader = DataLoader(validation_dataset, batch_sampler=validation_sampler, **cuda_kwargs)
 
     # create the model and send to device
+    obsid_dict = {0:[0,1,2,3,4], 1:[5,6,7,8,9,10], 2:[11,12], 3:[13,14], 4:[15,16,17], 5:[18,19,20,21], 6:[22,23,24,25]}
     coords = coordinates.GridCoords(cell_size=0.005, npix=1028)
-    model = Net(coords).to(device)
+
+    # initialize from the base_cube, just until we get a run through
+    # checkpoint = torch.load(args.load_checkpoint, map_location=torch.device('cpu'))
+    # base_cube = checkpoint["model_state_dict"]["bcube.base_cube"]
+    # model = Net(coords, obsid_dict=obsid_dict, base_cube=base_cube).to(device)
+    model = Net(coords, obsid_dict=obsid_dict, freeze_weights=args.freeze_weights).to(device)
 
     # create optimizer
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr)
@@ -466,8 +514,6 @@ def main():
             },
             args.save_checkpoint,
         )
-
-    # TODO: see what the variation in number of baselines / dirty image is for each batch... is it informative?
 
     writer.close()
 
