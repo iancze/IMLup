@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.colors as mco
 import matplotlib.pyplot as plt
 from mpol import coordinates, precomposed, utils, plot
+from mpol.constants import arcsec
 from mpol.input_output import ProcessFitsImage
 from astropy.visualization.mpl_normalize import simple_norm
 
@@ -12,6 +13,7 @@ def main():
     parser = argparse.ArgumentParser(description="Compare image to DSHARP image")
     parser.add_argument("load_checkpoint", metavar="load-checkpoint", help="Path to checkpoint from which to resume.")
     parser.add_argument("dsharpfits", help="Path to DSHARP FITS file.")
+    parser.add_argument("outfile")
     args = parser.parse_args()
 
     coords = coordinates.GridCoords(cell_size=0.005, npix=1028)
@@ -29,6 +31,7 @@ def main():
         
     fig, ax = plt.subplots(ncols=2, figsize=(9,4))
 
+
     fits_obj = ProcessFitsImage(args.dsharpfits)
     clean_im, clean_im_ext, clean_beam = fits_obj.get_image(beam=True)
 
@@ -38,6 +41,18 @@ def main():
     beam_area = (np.pi / (4 * np.log(2))) * BMAJ * BMIN # arcsec^2
     jy_arcsec = 1e-3 * clean_im / beam_area
 
+    from astropy.io import fits
+    hdu_list = fits.open(args.dsharpfits)
+    hdu = hdu_list[0]
+
+    # calculate the total flux of each image 
+    # convert to Jy/pixel then sum
+    RA, DEC, ext = fits_obj.get_extent(hdu.header)
+    pixel_size_clean = np.abs((RA[1] - RA[0]) * (DEC[1] - DEC[0])) # arcsec^2
+    print("flux clean", np.sum(jy_arcsec * pixel_size_clean), "Jy")
+
+    pixel_size_mpol = (coords.dl / arcsec)**2
+    print("flux MPoL", np.sum(sky_image * pixel_size_mpol))
 
     norm_clean = simple_norm(jy_arcsec, stretch='asinh', asinh_a=0.02)
     norm_mpol = simple_norm(sky_image, stretch='asinh', asinh_a=0.02, 
@@ -55,7 +70,7 @@ def main():
         a.set_ylim(-r, r)
 
     fig.subplots_adjust(wspace=0.25)
-    fig.savefig("clean_comparison.png", dpi=300)
+    fig.savefig(args.outfile, dpi=300)
 
 
 if __name__ == "__main__":

@@ -50,4 +50,13 @@ rule dirty_img:
 # python src/sgd_weights.py data/raw/imlup.asdf --lr 1000 --batch-size 50000 --tensorboard-log-dir analysis/weights/runs/exp7 --epochs 2 --load-checkpoint analysis/weights/checkpoints/checkpoint6.pt --save-checkpoint analysis/weights/checkpoints/checkpoint7.pt --log-interval 5 --freeze_weights --sampler ddid
 
 
+### now try sgd_amplitudes, includes weights (fixed)
+# hot start from previous checkpoint
+# python src/sgd_amplitudes.py data/raw/imlup.asdf --lr 1e-2 --batch-size 50000 --tensorboard-log-dir analysis/amplitudes/runs/exp1 --epochs 2 --load-checkpoint analysis/amplitudes/checkpoints/checkpoint1.pt --save-checkpoint analysis/amplitudes/checkpoints/checkpoint2.pt --log-interval 5 --freeze_weights
+
+# python src/sgd_amplitudes.py data/raw/imlup.asdf --lr 1e-1 --batch-size 50000 --tensorboard-log-dir analysis/amplitudes/runs/exp1 --epochs 1 --load-checkpoint analysis/weights/checkpoints/checkpoint7.pt --save-checkpoint analysis/amplitudes/checkpoints/checkpoint1.pt --log-interval 100 --freeze_weights
+# python src/sgd_amplitudes.py data/raw/imlup.asdf --lr 500 --batch-size 50000 --tensorboard-log-dir analysis/amplitudes/runs/exp2 --epochs 1 --load-checkpoint analysis/amplitudes/checkpoints/checkpoint1.pt --save-checkpoint analysis/amplitudes/checkpoints/checkpoint2.pt --log-interval 10 --freeze_weights --freeze_amps --sampler ddid
+# python src/sgd_amplitudes.py data/raw/imlup.asdf --lr 1000 --batch-size 50000 --tensorboard-log-dir analysis/amplitudes/runs/exp3 --epochs 1 --load-checkpoint analysis/amplitudes/checkpoints/checkpoint2.pt --save-checkpoint analysis/amplitudes/checkpoints/checkpoint3.pt --log-interval 100 --freeze_weights --freeze_amps --sampler ddid
+# python src/sgd_amplitudes.py data/raw/imlup.asdf --lr 1000 --batch-size 50000 --tensorboard-log-dir analysis/amplitudes/runs/exp4 --epochs 6 --load-checkpoint analysis/amplitudes/checkpoints/checkpoint3.pt --save-checkpoint analysis/amplitudes/checkpoints/checkpoint4.pt --log-interval 50 --freeze_weights --freeze_amps --sampler ddid
+
 # python src/compare_dsharp.py analysis/checkpoints/checkpoint13.pt data/raw/dsharp.fits
