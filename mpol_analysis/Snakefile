@@ -23,48 +23,11 @@ rule dirty_img:
 
 
 # start to SGD 11/5/24
-# python src/sgd_vanilla.py data/raw/imlup.asdf --lr 1e-3 --tensorboard-log-dir analysis/vanilla/runs/exp1 --epochs 2 --save-checkpoint analysis/checkpoints/checkpoint.pt
+
+# python src/sgd.py data/raw/imlup.asdf --tensorboard-log-dir analysis/runs/exp0 --save-checkpoint analysis/checkpoints/chk0.pt --freeze_weights --freeze_amps --sampler ddid
+# python src/sgd.py data/raw/imlup.asdf --tensorboard-log-dir analysis/runs/exp0 --load-checkpoint analysis/checkpoints/chk0.pt --save-checkpoint analysis/checkpoints/chk1.pt --freeze_weights --freeze_amps --sampler ddid
 
 
-
-
-
-
-# python src/sgd.py data/raw/imlup.asdf --lr 10 --batch-size 50000 --tensorboard-log-dir analysis/runs/exp1 --epochs 2 --save-checkpoint analysis/checkpoints/checkpoint.pt
-# python src/sgd.py data/raw/imlup.asdf --lr 10 --batch-size 50000 --tensorboard-log-dir analysis/runs/exp2 --epochs 3 --load-checkpoint analysis/checkpoint.pt --save-checkpoint analysis/checkpoints//checkpoint2.pt 
-# python src/sgd.py data/raw/imlup.asdf --lr 30 --batch-size 50000 --tensorboard-log-dir analysis/runs/exp3 --epochs 3 --load-checkpoint analysis/checkpoints/checkpoint2.pt --save-checkpoint analysis/checkpoints/checkpoint3.pt 
-# python src/sgd.py data/raw/imlup.asdf --lr 100 --batch-size 50000 --tensorboard-log-dir analysis/runs/exp5 --epochs 3 --load-checkpoint analysis/checkpoints/checkpoint4.pt --save-checkpoint analysis/checkpoints/checkpoint5.pt --log-interval 100
-# python src/sgd.py data/raw/imlup.asdf --lr 300 --batch-size 50000 --tensorboard-log-dir analysis/runs/exp6 --epochs 2 --load-checkpoint analysis/checkpoints/checkpoint5.pt --save-checkpoint analysis/checkpoints/checkpoint6.pt --log-interval 100
-# python src/sgd.py data/raw/imlup.asdf --lr 300 --batch-size 50000 --tensorboard-log-dir analysis/runs/exp7 --epochs 2 --load-checkpoint analysis/checkpoints/checkpoint6.pt --save-checkpoint analysis/checkpoints/checkpoint7.pt --log-interval 10 --sampler ddid
-# python src/sgd.py data/raw/imlup.asdf --lr 500 --batch-size 50000 --tensorboard-log-dir analysis/runs/exp8 --epochs 3 --load-checkpoint analysis/checkpoints/checkpoint7.pt --save-checkpoint analysis/checkpoints/checkpoint8.pt --log-interval 10 --sampler ddid
-# python src/sgd.py data/raw/imlup.asdf --lr 500 --batch-size 50000 --tensorboard-log-dir analysis/runs/exp9 --epochs 1 --load-checkpoint analysis/checkpoints/checkpoint8.pt --save-checkpoint analysis/checkpoints/checkpoint9.pt --log-interval 10 --sampler ddid
-# python src/sgd.py data/raw/imlup.asdf --lr 500 --batch-size 50000 --tensorboard-log-dir analysis/runs/exp10 --epochs 3 --load-checkpoint analysis/checkpoints/checkpoint9.pt --save-checkpoint analysis/checkpoints/checkpoint10.pt --log-interval 100 --sampler ddid
-# python src/sgd.py data/raw/imlup.asdf --lr 1000 --batch-size 50000 --tensorboard-log-dir analysis/runs/exp11 --epochs 5 --load-checkpoint analysis/checkpoints/checkpoint10.pt --save-checkpoint analysis/checkpoints/checkpoint11.pt --log-interval 100 --sampler ddid
-# python src/sgd.py data/raw/imlup.asdf --lr 1000 --batch-size 50000 --tensorboard-log-dir analysis/runs/exp12 --epochs 10 --load-checkpoint analysis/checkpoints/checkpoint11.pt --save-checkpoint analysis/checkpoints/checkpoint12.pt --log-interval 100 --sampler ddid
-# python src/sgd.py data/raw/imlup.asdf --lr 1000 --batch-size 50000 --tensorboard-log-dir analysis/runs/exp13 --epochs 2 --load-checkpoint analysis/checkpoints/checkpoint12.pt --save-checkpoint analysis/checkpoints/checkpoint13.pt --log-interval 100 --sampler ddid --sb_only
-### previous used sgd_vanilla
-
-### this uses sgd_weights
-# need to start with very small learning rate so the weights don't error
-# python src/sgd_weights.py data/raw/imlup.asdf --lr 1e-3 --batch-size 50000 --tensorboard-log-dir analysis/weights/runs/exp1 --epochs 1 --load-checkpoint analysis/vanilla/checkpoints/checkpoint13.pt --save-checkpoint analysis/weights/checkpoints/checkpoint1.pt --log-interval 10 --sampler ddid
-# python src/sgd_weights.py data/raw/imlup.asdf --lr 5e-3 --batch-size 50000 --tensorboard-log-dir analysis/weights/runs/exp2 --epochs 1 --load-checkpoint analysis/weights/checkpoints/checkpoint1.pt --save-checkpoint analysis/weights/checkpoints/checkpoint2.pt --log-interval 10 --sampler ddid
-# python src/sgd_weights.py data/raw/imlup.asdf --lr 1e-2 --batch-size 50000 --tensorboard-log-dir analysis/weights/runs/exp3 --epochs 3 --load-checkpoint analysis/weights/checkpoints/checkpoint2.pt --save-checkpoint analysis/weights/checkpoints/checkpoint3.pt --log-interval 10 --sampler ddid
-# python src/sgd_weights.py data/raw/imlup.asdf --lr 0.1 --batch-size 50000 --tensorboard-log-dir analysis/weights/runs/exp4 --epochs 2 --load-checkpoint analysis/weights/checkpoints/checkpoint3.pt --save-checkpoint analysis/weights/checkpoints/checkpoint4.pt --log-interval 10 --sampler ddid
-
-# weights have mostly stabilized, now try collection of points, sampler normal
-# python src/sgd_weights.py data/raw/imlup.asdf --lr 0.1 --batch-size 50000 --tensorboard-log-dir analysis/weights/runs/exp5 --epochs 2 --load-checkpoint analysis/weights/checkpoints/checkpoint4.pt --save-checkpoint analysis/weights/checkpoints/checkpoint5.pt --log-interval 10 
-# python src/sgd_weights.py data/raw/imlup.asdf --lr 1000 --batch-size 50000 --tensorboard-log-dir analysis/weights/runs/exp6 --epochs 2 --load-checkpoint analysis/weights/checkpoints/checkpoint5.pt --save-checkpoint analysis/weights/checkpoints/checkpoint6.pt --log-interval 10 --freeze_weights --sampler ddid
-# python src/sgd_weights.py data/raw/imlup.asdf --lr 1000 --batch-size 50000 --tensorboard-log-dir analysis/weights/runs/exp7 --epochs 2 --load-checkpoint analysis/weights/checkpoints/checkpoint6.pt --save-checkpoint analysis/weights/checkpoints/checkpoint7.pt --log-interval 5 --freeze_weights --sampler ddid
-
-
-### now try sgd_amplitudes, includes weights (fixed)
-# hot start from previous checkpoint
-# python src/sgd_amplitudes.py data/raw/imlup.asdf --lr 1e-2 --batch-size 50000 --tensorboard-log-dir analysis/amplitudes/runs/exp1 --epochs 2 --load-checkpoint analysis/amplitudes/checkpoints/checkpoint1.pt --save-checkpoint analysis/amplitudes/checkpoints/checkpoint2.pt --log-interval 5 --freeze_weights
-
-# python src/sgd_amplitudes.py data/raw/imlup.asdf --lr 1e-1 --batch-size 50000 --tensorboard-log-dir analysis/amplitudes/runs/exp1 --epochs 1 --load-checkpoint analysis/weights/checkpoints/checkpoint7.pt --save-checkpoint analysis/amplitudes/checkpoints/checkpoint1.pt --log-interval 100 --freeze_weights
-# python src/sgd_amplitudes.py data/raw/imlup.asdf --lr 500 --batch-size 50000 --tensorboard-log-dir analysis/amplitudes/runs/exp2 --epochs 1 --load-checkpoint analysis/amplitudes/checkpoints/checkpoint1.pt --save-checkpoint analysis/amplitudes/checkpoints/checkpoint2.pt --log-interval 10 --freeze_weights --freeze_amps --sampler ddid
-# python src/sgd_amplitudes.py data/raw/imlup.asdf --lr 1000 --batch-size 50000 --tensorboard-log-dir analysis/amplitudes/runs/exp3 --epochs 1 --load-checkpoint analysis/amplitudes/checkpoints/checkpoint2.pt --save-checkpoint analysis/amplitudes/checkpoints/checkpoint3.pt --log-interval 100 --freeze_weights --freeze_amps --sampler ddid
-# python src/sgd_amplitudes.py data/raw/imlup.asdf --lr 1000 --batch-size 50000 --tensorboard-log-dir analysis/amplitudes/runs/exp4 --epochs 6 --load-checkpoint analysis/amplitudes/checkpoints/checkpoint3.pt --save-checkpoint analysis/amplitudes/checkpoints/checkpoint4.pt --log-interval 50 --freeze_weights --freeze_amps --sampler ddid
 
 #### Compare best MPoL image to the CLEAN 
-# python src/compare_CLEAN_mpol.py analysis/checkpoints/checkpoint13.pt data/raw/dsharp.fits
+# python src/compare_CLEAN_mpol.py analysis/checkpoints/checkpoint13.pt data/raw/dsharp.fits 

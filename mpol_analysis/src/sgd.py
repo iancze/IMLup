@@ -1,33 +1,16 @@
 import numpy as np
 import loaddata
 import torch
+import dirty_image
 import argparse
 import matplotlib.colors as mco
 import matplotlib.pyplot as plt
 from torch.utils.data import TensorDataset, DataLoader, Sampler
-from mpol import coordinates, gridding, fourier, images, utils, plot
+from mpol import coordinates, gridding, fourier, images, losses, utils, plot
 import visread
 import visread.visualization
 
 from torch.utils.tensorboard import SummaryWriter
-
-# following structure from https://github.com/pytorch/examples/blob/main/mnist/main.py
-
-# create our new loss function
-def log_likelihood(model_vis, data_vis, weight):
-    # asssumes tensors are the same shape
-    N = len(torch.ravel(data_vis)) # number of complex visibilities
-    resid = data_vis - model_vis
-
-    # derivation from real and imag in notebook
-    return - N * np.log(2 * np.pi) + torch.sum(torch.log(weight)) - 0.5 * torch.sum(weight * torch.abs(resid)**2)
-
-def neg_log_likelihood_avg(model_vis, data_vis, weight):
-    N = len(torch.ravel(data_vis)) # number of complex visibilities
-    ll = log_likelihood(model_vis, data_vis, weight)
-    # factor of 2 is because of complex calculation
-    return - ll / (2 * N)
-
 
 class Net(torch.nn.Module):
     r"""
@@ -37,20 +20,17 @@ class Net(torch.nn.Module):
         self,
         coords=None,
         nchan=1,
+        FWHM=0.05,
         obsid_dict=None,
-        base_cube=None,
         freeze_amps=False,
         freeze_weights=False,
         fixed_amp_index=0
     ):
         super().__init__()
 
-        # these should be saved as registered variables, so they are serialized on save
         self.coords = coords
         self.nchan = nchan
         self.fixed_amp_index = fixed_amp_index
-
-        # create parameters that store weights
         
         # assumes ddids indexed from 0
         # mapping from ddid to obsid
@@ -69,17 +49,10 @@ class Net(torch.nn.Module):
         # one for each ddid
         self.log10_sigma_factors = torch.nn.Parameter(torch.zeros(len(ddid2obsid)), requires_grad=(not freeze_weights))
 
-        self.bcube = images.BaseCube(
-            coords=self.coords, nchan=self.nchan, base_cube=base_cube
-        )
-
-        self.conv_layer = images.HannConvCube(nchan=self.nchan)
-
-        self.icube = images.ImageCube(
-            coords=self.coords, nchan=self.nchan, passthrough=True
-        )
+        self.bcube = images.BaseCube(coords=self.coords, nchan=self.nchan)
+        self.conv_layer = images.GaussConvFourier(coords=self.coords, FWHM_maj=FWHM, FWHM_min=FWHM)
+        self.icube = images.ImageCube(coords=self.coords, nchan=self.nchan)
         self.nufft = fourier.NuFFT(coords=self.coords, nchan=self.nchan)
-
 
     def adjust_weights(self, ddid, weight):
         r"""
@@ -121,12 +94,20 @@ class Net(torch.nn.Module):
 
     def forward(self, uu, vv):
         r"""
-        Predict visibilities at uu, vv.
+        Predict model visibilities at baseline locations.
 
-        Feed forward to calculate the model visibilities. In this step, a :class:`~mpol.images.BaseCube` is fed to a :class:`~mpol.images.HannConvCube` is fed to a :class:`~mpol.images.ImageCube` is fed to a :class:`~mpol.fourier.NuFFT` to produce the model visibilities.
+        Parameters
+        ----------
+        uu, vv : torch.Tensor
+            spatial frequencies. Units of :math:`\lambda`.
 
-        Returns: 1D complex torch tensor of model visibilities.
+        Returns
+        -------
+        torch.Tensor
+            1D complex torch tensor of model visibilities.
         """
+        # Feed-forward network passes base representation through "layers"
+        # to create model visibilities
         x = self.bcube()
         x = self.conv_layer(x)
         x = self.icube(x)
@@ -211,63 +192,17 @@ def plots(model, step, writer):
 def residual_dirty_image(coords, model_vis, uu, vv, data, weight, step, writer):
     # calculate residual dirty image for this *batch*
     resid = data - model_vis
+    imager = gridding.DirtyImager.from_tensors(
+        coords=coords, uu=uu, vv=vv, weight=weight, data=resid
+    )
+    img, beam = imager.get_dirty_image(
+        weighting="briggs",
+        robust=0.0,
+        check_visibility_scatter=False,
+        unit="Jy/arcsec^2",
+    )
 
-    # convert all quantities to numpy arrays 
-    uu = utils.torch2npy(uu)
-    vv = utils.torch2npy(vv)
-    resid = np.squeeze(utils.torch2npy(resid))
-    weight = utils.torch2npy(weight)
-    # print(uu.shape, vv.shape, resid.shape, weight.shape)
-    imager = gridding.DirtyImager(coords=coords, uu=uu, vv=vv, weight=weight, data_re=np.real(resid), data_im=np.imag(resid))
-    img, beam = imager.get_dirty_image(weighting="briggs", robust=0.0, check_visibility_scatter=False)
-
-    # plot the two
-    # set plot dimensions
-    xx = 8 # in
-    cax_width = 0.2 # in 
-    cax_sep = 0.1 # in
-    mmargin = 1.2
-    lmargin = 0.7
-    rmargin = 0.9
-    tmargin = 0.3
-    bmargin = 0.5
-
-    npanels = 2
-    # the size of image axes + cax_sep + cax_width
-    block_width = (xx - lmargin - rmargin - mmargin * (npanels - 1) )/npanels
-    ax_width = block_width - cax_width - cax_sep
-    ax_height = ax_width 
-    yy = bmargin + ax_height + tmargin
-    
-    kw = {"origin": "lower", "interpolation": "none", "extent": imager.coords.img_ext, "cmap":"inferno"}
-
-    fig = plt.figure(figsize=(xx, yy))
-    ax = []
-    cax = []
-    for i in range(npanels):
-        ax.append(fig.add_axes([(lmargin + i * (block_width + mmargin))/xx, bmargin/yy, ax_width/xx, ax_height/yy]))
-        cax.append(fig.add_axes([(lmargin + i * (block_width + mmargin) + ax_width + cax_sep)/xx, bmargin/yy, cax_width/xx, ax_height/yy]))
-
-    # single-channel image cube    
-    chan = 0
-
-    im_beam = ax[0].imshow(beam[chan], **kw)
-    cbar = plt.colorbar(im_beam, cax=cax[0])
-    ax[0].set_title("beam")
-    # zoom in a bit on the beam
-    r = 0.4
-    ax[0].set_xlim(r, -r)
-    ax[0].set_ylim(-r, r)
-
-    im = ax[1].imshow(img[chan], **kw)
-    ax[1].set_title("dirty image")
-    cbar = plt.colorbar(im, cax=cax[1])
-    cbar.set_label(r"Jy/beam")
-
-    for a in ax:
-        a.set_xlabel(r"$\Delta \alpha \cos \delta$ [${}^{\prime\prime}$]")
-        a.set_ylabel(r"$\Delta \delta$ [${}^{\prime\prime}$]")
-
+    fig = dirty_image.plot_beam_and_image(beam, img, imager.coords.img_ext)
     writer.add_figure("dirty_image", fig, step)
 
 # plot histogram of residuals normalized to weight
@@ -287,7 +222,7 @@ def plot_residual_histogram(model_vis, data, weight, ddid, step, writer):
 
     writer.add_figure("residual_scatter", fig, step)
 
-def train(args, model, device, train_loader, optimizer, epoch, writer):
+def train(args, model, device, train_loader, optimizer, epoch, lam_ent, writer):
     model.train()
     for i_batch, (uu, vv, data, weight, ddid) in enumerate(train_loader):
         # send all values to device
@@ -302,7 +237,7 @@ def train(args, model, device, train_loader, optimizer, epoch, writer):
         optimizer.zero_grad()
         
         # get model visibilities
-        vis = model(uu, vv)
+        vis = model(uu, vv)[0] # take only the first channel
 
         # correct the weights for the per-ddid weight rescale factors
         # these originated from bad pipeline calibration
@@ -311,8 +246,12 @@ def train(args, model, device, train_loader, optimizer, epoch, writer):
         # allow for per-obsid adjustments of amplitude scaling
         vis_scaled, weight_scaled = model.adjust_amplitudes(ddid, vis, weight_adjusted)
 
-        # calculate loss using adjusted visibilities and weights
-        loss = neg_log_likelihood_avg(vis_scaled, data, weight_scaled)
+        loss = losses.neg_log_likelihood_avg(
+            vis_scaled, data, weight_scaled
+        ) + lam_ent * losses.entropy(
+            model.icube.packed_cube, prior_intensity=1e-4, tot_flux=0.253
+        )
+
         loss.backward()
         optimizer.step()
         
@@ -369,10 +308,10 @@ def validate(model, device, validate_loader):
             weight_adjusted = model.adjust_weights(ddid, weight)
 
             # calculate loss as total over all chunks
-            validate_loss += neg_log_likelihood_avg(vis, data, weight_adjusted).item()
+            validate_loss += losses.neg_log_likelihood_avg(vis, data, weight_adjusted).item()
 
     # re-normalize to total number of data points
-    validate_loss /= len(validate_loader.dataset)
+    validate_loss /= len(validate_loader)
     return validate_loss
 
 
@@ -385,13 +324,13 @@ def main():
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=100000,
+        default=20000,
         help="input batch size for training",
     )
     parser.add_argument(
         "--validation-batch-size",
         type=int,
-        default=100000,
+        default=20000,
         help="input batch size for validation",
     )
     parser.add_argument(
@@ -403,24 +342,16 @@ def main():
     parser.add_argument(
         "--epochs",
         type=int,
-        default=5,
+        default=30,
         help="number of epochs to train",
     )
     parser.add_argument(
         "--lr",
         type=float,
-        default=1.0,
+        default=1.0e-3,
         help="learning rate",
     )
-    parser.add_argument(
-        "--no-cuda", action="store_true", default=False, help="disables CUDA training"
-    )
-    parser.add_argument(
-        "--no-mps",
-        action="store_true",
-        default=False,
-        help="disables macOS GPU training",
-    )
+    parser.add_argument("--FWHM", type=float, default=0.05, help="FWHM of Gaussian Base layer in arcseconds.")
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -438,6 +369,7 @@ def main():
         "--tensorboard-log-dir",
         help="The log dir to which tensorboard files should be written.",
     )
+    parser.add_argument("--lam-ent", type=float, default=0.0)
     parser.add_argument("--load-checkpoint", help="Path to checkpoint from which to resume.")
     parser.add_argument(
         "--save-checkpoint",
@@ -452,12 +384,10 @@ def main():
     # set seed
     torch.manual_seed(args.seed)
 
-    # set up the devices
-    use_cuda = not args.no_cuda and torch.cuda.is_available()
-    use_mps = not args.no_mps and torch.backends.mps.is_available()
-    if use_cuda:
+    # choose the compute device, preference cuda > mps > cpu
+    if torch.cuda.is_available():
         device = torch.device("cuda")
-    elif use_mps:
+    elif torch.backends.mps.is_available():
         device = torch.device("mps")
     else:
         device = torch.device("cpu")
@@ -498,10 +428,7 @@ def main():
     validation_dataset = init_dataset(validation_indices)
 
     # set the batch sizes for the loaders
-    if use_cuda:
-        cuda_kwargs = {"num_workers": 1, "pin_memory": True}
-    else:
-        cuda_kwargs = {}    
+    cuda_kwargs = {"num_workers": 1, "pin_memory": True}
     
     if args.sampler == "default":
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, **cuda_kwargs)
@@ -520,14 +447,10 @@ def main():
     obsid_dict = {0:[0,1,2,3,4], 1:[5,6,7,8,9,10], 2:[11,12], 3:[13,14], 4:[15,16,17], 5:[18,19,20,21], 6:[22,23,24,25]}
     coords = coordinates.GridCoords(cell_size=0.005, npix=1028)
 
-    # initialize from the base_cube, just until we get a run through
-    # checkpoint = torch.load(args.load_checkpoint, map_location=torch.device('cpu'))
-    # base_cube = checkpoint["model_state_dict"]["bcube.base_cube"]
-    # model = Net(coords, obsid_dict=obsid_dict, base_cube=base_cube).to(device)
     model = Net(coords, obsid_dict=obsid_dict, freeze_amps=args.freeze_amps, freeze_weights=args.freeze_weights).to(device)
 
     # create optimizer
-    optimizer = torch.optim.SGD(model.parameters(), lr=args.lr)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
     # here is where we could set up a scheduler, if desired
 
     if args.load_checkpoint is not None:
@@ -539,10 +462,10 @@ def main():
 
     # enter the loop
     for epoch in range(0, args.epochs):
-        train(args, model, device, train_loader, optimizer, epoch, writer)
-        # vloss_avg = validate(model, device, validation_loader)
+        train(args, model, device, train_loader, optimizer, epoch, args.lam_ent, writer)
+        vloss_avg = validate(model, device, validation_loader)
         print("Logging validation")
-        # writer.add_scalar("vloss_avg", vloss_avg, epoch)
+        writer.add_scalar("vloss_avg", vloss_avg, epoch)
         optimizer.step()
 
     # save checkpoint
@@ -555,7 +478,6 @@ def main():
         )
 
     writer.close()
-
 
 if __name__ == "__main__":
     main()

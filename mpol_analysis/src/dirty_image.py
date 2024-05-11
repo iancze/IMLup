@@ -37,7 +37,7 @@ def plot_beam_and_image(beam, img, extent):
     ax_height = ax_width 
     yy = bmargin + ax_height + tmargin
     
-    kw = {"origin": "lower", "interpolation": "none", "extent": imager.coords.img_ext, "cmap":"inferno"}
+    kw = {"origin": "lower", "interpolation": "none", "extent": extent, "cmap":"inferno"}
 
     fig = plt.figure(figsize=(xx, yy))
     ax = []
