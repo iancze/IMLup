@@ -1,15 +1,13 @@
 import torch
 import argparse
 import numpy as np
-import matplotlib.colors as mco
 import matplotlib.pyplot as plt
-from mpol import coordinates, precomposed, utils, plot
+from mpol import coordinates, precomposed, utils
 from mpol.constants import arcsec
 from mpol.input_output import ProcessFitsImage
 from astropy.visualization.mpl_normalize import simple_norm
 
 def main():
-    # Training settings
     parser = argparse.ArgumentParser(description="Compare image to DSHARP image")
     parser.add_argument("load_checkpoint", metavar="load-checkpoint", help="Path to checkpoint from which to resume.")
     parser.add_argument("dsharpfits", help="Path to DSHARP FITS file.")

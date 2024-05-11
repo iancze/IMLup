@@ -18,21 +18,9 @@ def init_dirty_imager(filename):
         data_im=np.imag(data),
     )
 
-def main():
+def plot_beam_and_image(beam, img, extent):
 
-    parser = argparse.ArgumentParser(
-        description="Make a dirty image with the visibilities."
-    )
-    parser.add_argument("file", help="Path to asdf file")
-    parser.add_argument("outfile", help="Output file") 
-    args = parser.parse_args()
-    
-    imager = init_dirty_imager(args.file)
-
-    img, beam = imager.get_dirty_image(weighting="briggs", robust=0.0)
-
-
-    # set plot dimensions
+# set plot dimensions
     xx = 8 # in
     cax_width = 0.2 # in 
     cax_sep = 0.1 # in
@@ -78,6 +66,22 @@ def main():
         a.set_xlabel(r"$\Delta \alpha \cos \delta$ [${}^{\prime\prime}$]")
         a.set_ylabel(r"$\Delta \delta$ [${}^{\prime\prime}$]")
 
+    return fig
+
+def main():
+
+    parser = argparse.ArgumentParser(
+        description="Make a dirty image with the visibilities."
+    )
+    parser.add_argument("file", help="Path to asdf file")
+    parser.add_argument("outfile", help="Output file") 
+    args = parser.parse_args()
+    
+    imager = init_dirty_imager(args.file)
+
+    img, beam = imager.get_dirty_image(weighting="briggs", robust=0.0)
+    fig = plot_beam_and_image(beam, img, imager.coords.img_ext)
+    
     fig.savefig(args.outfile, dpi=300)
 
 

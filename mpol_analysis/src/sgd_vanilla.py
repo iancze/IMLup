@@ -1,5 +1,6 @@
 import numpy as np
 import loaddata
+import dirty_image
 import torch
 import argparse
 import matplotlib.colors as mco
@@ -13,53 +14,44 @@ from torch.utils.tensorboard import SummaryWriter
 
 # following structure from https://github.com/pytorch/examples/blob/main/mnist/main.py
 
-# create our new loss function
-def log_likelihood_avg_loss(model_vis, data_vis, weight):
-    N = len(torch.ravel(data_vis))
-    log_likelihood = losses.log_likelihood(model_vis, data_vis, weight)
-    # factor of 2 from complex-valued data
-    return log_likelihood/(2 * N)
-
-
-# create a model that uses the NuFFT to predict
 class Net(torch.nn.Module):
     def __init__(
         self,
         coords=None,
         nchan=1,
-        base_cube=None,
+        FWHM=0.05,
     ):
         super().__init__()
 
-        # these should be saved as registered variables, so they are serialized on save
         self.coords = coords
         self.nchan = nchan
 
-        self.bcube = images.BaseCube(
-            coords=self.coords, nchan=self.nchan, base_cube=base_cube
-        )
-
-        self.conv_layer = images.HannConvCube(nchan=self.nchan)
-
-        self.icube = images.ImageCube(
-            coords=self.coords, nchan=self.nchan, passthrough=True
-        )
+        self.bcube = images.BaseCube(coords=self.coords, nchan=self.nchan)
+        self.conv_layer = images.GaussConvFourier(coords=self.coords, FWHM_maj=FWHM, FWHM_min=FWHM)
+        self.icube = images.ImageCube(coords=self.coords, nchan=self.nchan)
         self.nufft = fourier.NuFFT(coords=self.coords, nchan=self.nchan)
 
     def forward(self, uu, vv):
         r"""
-        Predict visibilities at uu, vv.
+        Predict model visibilities at baseline locations.
 
-        Feed forward to calculate the model visibilities. In this step, a :class:`~mpol.images.BaseCube` is fed to a :class:`~mpol.images.HannConvCube` is fed to a :class:`~mpol.images.ImageCube` is fed to a :class:`~mpol.fourier.NuFFT` to produce the model visibilities.
+        Parameters
+        ----------
+        uu, vv : torch.Tensor
+            spatial frequencies. Units of :math:`\lambda`.
 
-        Returns: 1D complex torch tensor of model visibilities.
+        Returns
+        -------
+        torch.Tensor
+            1D complex torch tensor of model visibilities.
         """
+        # Feed-forward network passes base representation through "layers"
+        # to create model visibilities
         x = self.bcube()
         x = self.conv_layer(x)
         x = self.icube(x)
         vis = self.nufft(x, uu, vv)
         return vis
-
 
 class DdidBatchSampler(Sampler):
     """
@@ -135,75 +127,23 @@ def plots(model, step, writer):
     writer.add_figure("b_grad", fig, step)
 
 
-# plot fourier cube (amplitudes and phases)
-def plot_fourier_cube():
-    pass
-
-
-def plot_baselines(step, writer):
-    pass
-
 def residual_dirty_image(coords, model_vis, uu, vv, data, weight, step, writer):
     # calculate residual dirty image for this *batch*
     resid = data - model_vis
 
-    # convert all quantities to numpy arrays 
-    uu = utils.torch2npy(uu)
-    vv = utils.torch2npy(vv)
-    resid = np.squeeze(utils.torch2npy(resid))
-    weight = utils.torch2npy(weight)
-    # print(uu.shape, vv.shape, resid.shape, weight.shape)
-    imager = gridding.DirtyImager(coords=coords, uu=uu, vv=vv, weight=weight, data_re=np.real(resid), data_im=np.imag(resid))
-    img, beam = imager.get_dirty_image(weighting="briggs", robust=0.0, check_visibility_scatter=False)
+    imager = gridding.DirtyImager.from_tensors(
+        coords=coords, uu=uu, vv=vv, weight=weight, data=resid
+    )
+    img, beam = imager.get_dirty_image(
+        weighting="briggs",
+        robust=0.0,
+        check_visibility_scatter=False,
+        unit="Jy/arcsec^2",
+    )
 
-    # plot the two
-    # set plot dimensions
-    xx = 8 # in
-    cax_width = 0.2 # in 
-    cax_sep = 0.1 # in
-    mmargin = 1.2
-    lmargin = 0.7
-    rmargin = 0.9
-    tmargin = 0.3
-    bmargin = 0.5
-
-    npanels = 2
-    # the size of image axes + cax_sep + cax_width
-    block_width = (xx - lmargin - rmargin - mmargin * (npanels - 1) )/npanels
-    ax_width = block_width - cax_width - cax_sep
-    ax_height = ax_width 
-    yy = bmargin + ax_height + tmargin
-    
-    kw = {"origin": "lower", "interpolation": "none", "extent": imager.coords.img_ext, "cmap":"inferno"}
-
-    fig = plt.figure(figsize=(xx, yy))
-    ax = []
-    cax = []
-    for i in range(npanels):
-        ax.append(fig.add_axes([(lmargin + i * (block_width + mmargin))/xx, bmargin/yy, ax_width/xx, ax_height/yy]))
-        cax.append(fig.add_axes([(lmargin + i * (block_width + mmargin) + ax_width + cax_sep)/xx, bmargin/yy, cax_width/xx, ax_height/yy]))
-
-    # single-channel image cube    
-    chan = 0
-
-    im_beam = ax[0].imshow(beam[chan], **kw)
-    cbar = plt.colorbar(im_beam, cax=cax[0])
-    ax[0].set_title("beam")
-    # zoom in a bit on the beam
-    r = 0.4
-    ax[0].set_xlim(r, -r)
-    ax[0].set_ylim(-r, r)
-
-    im = ax[1].imshow(img[chan], **kw)
-    ax[1].set_title("dirty image")
-    cbar = plt.colorbar(im, cax=cax[1])
-    cbar.set_label(r"Jy/beam")
-
-    for a in ax:
-        a.set_xlabel(r"$\Delta \alpha \cos \delta$ [${}^{\prime\prime}$]")
-        a.set_ylabel(r"$\Delta \delta$ [${}^{\prime\prime}$]")
-
+    fig = dirty_image.plot_beam_and_image(beam, img, imager.coords.img_ext)
     writer.add_figure("dirty_image", fig, step)
+
 
 # plot histogram of residuals normalized to weight
 def plot_residual_histogram(model_vis, data, weight, ddid, step, writer):
@@ -222,14 +162,7 @@ def plot_residual_histogram(model_vis, data, weight, ddid, step, writer):
 
     writer.add_figure("residual_scatter", fig, step)
 
-# model will need to move to one that includes a key to index the amplitude and/or weight rescaling
-# or at least a dictionary that can look up obsid from ddid
-
-# plot the baseline distribution of the batch samples (potentially more relevant with inter-EB switching)
-
-# can train on just long baselines, just short baselines, etc, and see what happens to the model and residuals.
-
-def train(args, model, device, train_loader, optimizer, epoch, writer):
+def train(args, model, device, train_loader, optimizer, epoch, lam_ent, writer):
     model.train()
     for i_batch, (uu, vv, data, weight, ddid) in enumerate(train_loader):
         # send all values to device
@@ -243,10 +176,14 @@ def train(args, model, device, train_loader, optimizer, epoch, writer):
 
         optimizer.zero_grad()
         # get model visibilities
-        vis = model(uu, vv)
+        vis = model(uu, vv)[0] # take only the first channel
 
         # calculate loss
-        loss = losses.nll(vis, data, weight)
+        loss = losses.neg_log_likelihood_avg(
+            vis, data, weight
+        ) + lam_ent * losses.entropy(
+            model.icube.packed_cube, prior_intensity=1e-4, tot_flux=0.253
+        )
         loss.backward()
         optimizer.step()
 
@@ -287,32 +224,32 @@ def validate(model, device, validate_loader):
             )
 
             # get model visibilities
-            vis = model(uu, vv)
+            vis = model(uu, vv)[0] # take first channel
 
             # calculate loss as total over all chunks
-            validate_loss += losses.nll(vis, data, weight).item()
+            validate_loss += losses.neg_log_likelihood_avg(vis, data, weight).item()
 
-    # re-normalize to total number of data points
-    validate_loss /= len(validate_loader.dataset)
+    # re-normalize to total number of batches
+    validate_loss /= len(validate_loader)
     return validate_loss
 
 
 def main():
     # Training settings
-    parser = argparse.ArgumentParser(description="IM Lup SGD Example")
+    parser = argparse.ArgumentParser(description="IM Lup SGD")
     parser.add_argument(
         "asdf", help="Input path to .asdf file containing visibilities."
     )
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=100000,
+        default=10000,
         help="input batch size for training",
     )
     parser.add_argument(
         "--validation-batch-size",
         type=int,
-        default=100000,
+        default=10000,
         help="input batch size for validation",
     )
     parser.add_argument(
@@ -324,24 +261,16 @@ def main():
     parser.add_argument(
         "--epochs",
         type=int,
-        default=5,
+        default=20,
         help="number of epochs to train",
     )
     parser.add_argument(
         "--lr",
         type=float,
-        default=1.0,
+        default=1e-3,
         help="learning rate",
     )
-    parser.add_argument(
-        "--no-cuda", action="store_true", default=False, help="disables CUDA training"
-    )
-    parser.add_argument(
-        "--no-mps",
-        action="store_true",
-        default=False,
-        help="disables macOS GPU training",
-    )
+    parser.add_argument("--FWHM", type=float, default=0.05, help="FWHM of Gaussian Base layer in arcseconds.")
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -352,13 +281,14 @@ def main():
     parser.add_argument(
         "--log-interval",
         type=int,
-        default=10,
+        default=4,
         help="how many batches to wait before logging training status",
     )
     parser.add_argument(
         "--tensorboard-log-dir",
         help="The log dir to which tensorboard files should be written.",
     )
+    parser.add_argument("--lam-ent", type=float, default=0.0)
     parser.add_argument("--load-checkpoint", help="Path to checkpoint from which to resume.")
     parser.add_argument(
         "--save-checkpoint",
@@ -371,15 +301,14 @@ def main():
     # set seed
     torch.manual_seed(args.seed)
 
-    # set up the devices
-    use_cuda = not args.no_cuda and torch.cuda.is_available()
-    use_mps = not args.no_mps and torch.backends.mps.is_available()
-    if use_cuda:
+    # choose the compute device, preference cuda > mps > cpu
+    if torch.cuda.is_available():
         device = torch.device("cuda")
-    elif use_mps:
+    elif torch.backends.mps.is_available():
         device = torch.device("mps")
     else:
         device = torch.device("cpu")
+
 
     # load the full dataset
     uu, vv, data, weight, ddid = loaddata.get_ddid_data(args.asdf, args.sb_only)
@@ -417,10 +346,7 @@ def main():
     validation_dataset = init_dataset(validation_indices)
 
     # set the batch sizes for the loaders
-    if use_cuda:
-        cuda_kwargs = {"num_workers": 1, "pin_memory": True}
-    else:
-        cuda_kwargs = {}    
+    cuda_kwargs = {"num_workers": 1, "pin_memory": True}
     
     if args.sampler == "default":
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, **cuda_kwargs)
@@ -437,22 +363,22 @@ def main():
 
     # create the model and send to device
     coords = coordinates.GridCoords(cell_size=0.005, npix=1028)
-    model = Net(coords).to(device)
+    model = Net(coords, nchan=1, FWHM=args.FWHM).to(device)
 
     # create optimizer
-    optimizer = torch.optim.SGD(model.parameters(), lr=args.lr)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
     # here is where we could set up a scheduler, if desired
 
     if args.load_checkpoint is not None:
         checkpoint = torch.load(args.load_checkpoint)
-        model.load_state_dict(checkpoint["model_state_dict"])
+        model.load_state_dict(checkpoint["model_state_dict"], strict=False)
 
     # set up TensorBoard instance
     writer = SummaryWriter(log_dir=args.tensorboard_log_dir)
 
     # enter the loop
     for epoch in range(0, args.epochs):
-        train(args, model, device, train_loader, optimizer, epoch, writer)
+        train(args, model, device, train_loader, optimizer, epoch, args.lam_ent, writer)
         vloss_avg = validate(model, device, validation_loader)
         print("Logging validation")
         writer.add_scalar("vloss_avg", vloss_avg, epoch)
@@ -466,8 +392,6 @@ def main():
             },
             args.save_checkpoint,
         )
-
-    # TODO: see what the variation in number of baselines / dirty image is for each batch... is it informative?
 
     writer.close()
 

@@ -22,7 +22,14 @@ rule dirty_img:
     shell: "python src/dirty_image.py {input} {output}"
 
 
-# start to SGD
+# start to SGD 11/5/24
+# python src/sgd_vanilla.py data/raw/imlup.asdf --lr 1e-3 --tensorboard-log-dir analysis/vanilla/runs/exp1 --epochs 2 --save-checkpoint analysis/checkpoints/checkpoint.pt
+
+
+
+
+
+
 # python src/sgd.py data/raw/imlup.asdf --lr 10 --batch-size 50000 --tensorboard-log-dir analysis/runs/exp1 --epochs 2 --save-checkpoint analysis/checkpoints/checkpoint.pt
 # python src/sgd.py data/raw/imlup.asdf --lr 10 --batch-size 50000 --tensorboard-log-dir analysis/runs/exp2 --epochs 3 --load-checkpoint analysis/checkpoint.pt --save-checkpoint analysis/checkpoints//checkpoint2.pt 
 # python src/sgd.py data/raw/imlup.asdf --lr 30 --batch-size 50000 --tensorboard-log-dir analysis/runs/exp3 --epochs 3 --load-checkpoint analysis/checkpoints/checkpoint2.pt --save-checkpoint analysis/checkpoints/checkpoint3.pt 
@@ -59,4 +66,5 @@ rule dirty_img:
 # python src/sgd_amplitudes.py data/raw/imlup.asdf --lr 1000 --batch-size 50000 --tensorboard-log-dir analysis/amplitudes/runs/exp3 --epochs 1 --load-checkpoint analysis/amplitudes/checkpoints/checkpoint2.pt --save-checkpoint analysis/amplitudes/checkpoints/checkpoint3.pt --log-interval 100 --freeze_weights --freeze_amps --sampler ddid
 # python src/sgd_amplitudes.py data/raw/imlup.asdf --lr 1000 --batch-size 50000 --tensorboard-log-dir analysis/amplitudes/runs/exp4 --epochs 6 --load-checkpoint analysis/amplitudes/checkpoints/checkpoint3.pt --save-checkpoint analysis/amplitudes/checkpoints/checkpoint4.pt --log-interval 50 --freeze_weights --freeze_amps --sampler ddid
 
-# python src/compare_dsharp.py analysis/checkpoints/checkpoint13.pt data/raw/dsharp.fits
+#### Compare best MPoL image to the CLEAN 
+# python src/compare_CLEAN_mpol.py analysis/checkpoints/checkpoint13.pt data/raw/dsharp.fits
