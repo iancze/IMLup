@@ -24,10 +24,35 @@ rule dirty_img:
 
 # start to SGD 11/5/24
 
-# python src/sgd.py data/raw/imlup.asdf --tensorboard-log-dir analysis/runs/exp0 --save-checkpoint analysis/checkpoints/chk0.pt --freeze_weights --freeze_amps --sampler ddid
-# python src/sgd.py data/raw/imlup.asdf --tensorboard-log-dir analysis/runs/exp0 --load-checkpoint analysis/checkpoints/chk0.pt --save-checkpoint analysis/checkpoints/chk1.pt --freeze_weights --freeze_amps --sampler ddid
+# python src/sgd.py data/raw/imlup.asdf --tensorboard-log-dir analysis/runs/exp0 --save-checkpoint analysis/checkpoints/chk0.pt --freeze_weights --freeze_amps
+# python src/sgd.py data/raw/imlup.asdf --tensorboard-log-dir analysis/runs/exp1 --load-checkpoint analysis/checkpoints/chk0.pt --save-checkpoint analysis/checkpoints/chk1.pt --freeze_amps 
 
+
+# python src/sgd.py data/raw/imlup.asdf --tensorboard-log-dir analysis/runs/exp2 --load-checkpoint analysis/checkpoints/chk1.pt --save-checkpoint analysis/checkpoints/chk2.pt --freeze_amps --freeze_weights --lr 1e-1
+
+# python src/sgd.py data/raw/imlup.asdf --tensorboard-log-dir analysis/runs/exp3 --load-checkpoint analysis/checkpoints/chk2.pt --save-checkpoint analysis/checkpoints/chk3.pt --freeze_amps --freeze_weights --lr 1e-1 --FWHM 0.02
+
+# python src/sgd.py data/raw/imlup.asdf --tensorboard-log-dir analysis/runs/exp4 --load-checkpoint analysis/checkpoints/chk3.pt --save-checkpoint analysis/checkpoints/chk4.pt --freeze_amps --freeze_weights --lr 1e-1 --FWHM 0.02
+
+# python src/sgd.py data/raw/imlup.asdf --tensorboard-log-dir analysis/runs/exp5 --load-checkpoint analysis/checkpoints/chk4.pt --save-checkpoint analysis/checkpoints/chk5.pt --freeze_amps --freeze_weights --lr 1e-2 --FWHM 0.02
+
+# python src/sgd.py data/raw/imlup.asdf --tensorboard-log-dir analysis/runs/exp6 --load-checkpoint analysis/checkpoints/chk5.pt --save-checkpoint analysis/checkpoints/chk6.pt --freeze_amps --lr 1e-2 --FWHM 0.02
+
+# python src/sgd.py data/raw/imlup.asdf --tensorboard-log-dir analysis/runs/exp7 --load-checkpoint analysis/checkpoints/chk6.pt --save-checkpoint analysis/checkpoints/chk7.pt --lr 1e-2 --FWHM 0.014 --lam-ent 1e-8
+
+
+# astrometric shifts
+# python src/sgd.py data/raw/imlup.asdf --tensorboard-log-dir analysis/runs/shift/exp0 --save-checkpoint analysis/checkpoints/shift/chk0.pt --freeze_weights --freeze_amps --freeze_positions --lr 1e-1 --FWHM 0.014 --lam-ent 1e-8
+# python src/sgd.py data/raw/imlup.asdf --tensorboard-log-dir analysis/runs/shift/exp1 --load-checkpoint analysis/checkpoints/shift/chk0.pt --save-checkpoint analysis/checkpoints/shift/chk1.pt --freeze_amps --freeze_positions --lr 1e-1 --FWHM 0.014 --lam-ent 1e-7
+
+# python src/sgd.py data/raw/imlup.asdf --tensorboard-log-dir analysis/runs/shift/exp1 --load-checkpoint analysis/checkpoints/shift/chk1.pt --save-checkpoint analysis/checkpoints/shift/chk2.pt --freeze_amps --lr 1e-1 --FWHM 0.02 --lam-ent 5e-8
+
+# python src/sgd.py data/raw/imlup.asdf --tensorboard-log-dir analysis/runs/shift/exp3 --load-checkpoint analysis/checkpoints/shift/chk2.pt --save-checkpoint analysis/checkpoints/shift/chk3.pt --freeze_amps --lr 5e-3 --FWHM 0.02 --lam-ent 5e-8
+
+# python src/sgd.py data/raw/imlup.asdf --tensorboard-log-dir analysis/runs/shift/exp4 --load-checkpoint analysis/checkpoints/shift/chk3.pt --save-checkpoint analysis/checkpoints/shift/chk4.pt --freeze_amps --freeze_positions --lr 1e-2 --FWHM 0.02 --lam-ent 1e-8
+
+# python src/sgd.py data/raw/imlup.asdf --tensorboard-log-dir analysis/runs/shift/exp5 --load-checkpoint analysis/checkpoints/shift/chk4.pt --save-checkpoint analysis/checkpoints/shift/chk5.pt --freeze_amps --freeze_positions --lr 1e-2 --FWHM 0.03 --lam-ent 1e-9
 
 
 #### Compare best MPoL image to the CLEAN 
-# python src/compare_CLEAN_mpol.py analysis/checkpoints/checkpoint13.pt data/raw/dsharp.fits 
+# python src/compare_CLEAN_mpol.py analysis/checkpoints/shift/chk4.pt data/raw/dsharp.fits analysis/clean_v_mpol_0.03.png analysis/mpol_0.03.fits

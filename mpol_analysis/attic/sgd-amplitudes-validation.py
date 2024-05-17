@@ -6,7 +6,7 @@ import argparse
 import matplotlib.colors as mco
 import matplotlib.pyplot as plt
 from torch.utils.data import TensorDataset, DataLoader, Sampler
-from mpol import constants,coordinates, gridding, fourier, images, losses, utils, plot
+from mpol import coordinates, gridding, fourier, images, losses, utils, plot
 import visread
 import visread.visualization
 
@@ -24,17 +24,14 @@ class Net(torch.nn.Module):
         obsid_dict=None,
         freeze_amps=False,
         freeze_weights=False,
-        fixed_amp_index=0,
-        freeze_positions=False,
-        fixed_position_index=0
+        fixed_amp_index=0
     ):
         super().__init__()
 
         self.coords = coords
         self.nchan = nchan
         self.fixed_amp_index = fixed_amp_index
-        self.fixed_position_index = fixed_position_index
-
+        
         # assumes ddids indexed from 0
         # mapping from ddid to obsid
         ddid2obsid = []
@@ -51,10 +48,6 @@ class Net(torch.nn.Module):
 
         # one for each ddid
         self.log10_sigma_factors = torch.nn.Parameter(torch.zeros(len(ddid2obsid)), requires_grad=(not freeze_weights))
-
-        # positional offsets
-        self.delta_ra = torch.nn.Parameter(torch.zeros(len(obsid_dict) - 1), requires_grad=(not freeze_positions))
-        self.delta_dec = torch.nn.Parameter(torch.zeros(len(obsid_dict) - 1), requires_grad=(not freeze_positions))
 
         self.bcube = images.BaseCube(coords=self.coords, nchan=self.nchan)
         self.conv_layer = images.GaussConvFourier(coords=self.coords, FWHM_maj=FWHM, FWHM_min=FWHM)
@@ -98,45 +91,6 @@ class Net(torch.nn.Module):
         weight_scaled = weight / amp_factors**2
 
         return vis_scaled, weight_scaled
-    
-    def adjust_positions(self, ddid, uu, vv, vis):
-        r"""
-        Adjust the model visibilities according to the position offset factor.
-        """
-        # get the obsID that corresponds to all ddid
-        obsid = self.ddid2obsid[ddid]
-
-        # we have the problem that self.delta_ra and self.delta_delta have (len(obsid) - 1) keys, 
-        # so the index does not directly correspond to the factor,
-        # and we need to index len(obs) unique keys
-
-        # so our solution is to take the original array and insert 0 at the location of 
-        # the fixed_amp_index
-        # Unfortunately, PyTorch does not have an .insert method like Python lists, so workaround is
-
-        # split self.delta_ra at the index that should have the extra key
-        split = torch.hsplit(self.delta_ra, [self.fixed_position_index])
-        # reconcatenate with the key in the middle
-        augmented_delta_ra = torch.cat((split[0], self.zero_val, split[1]))
-        # get the factors that correspond to each visibility, depending on obsid
-        delta_ra = augmented_delta_ra[obsid]
-
-        split = torch.hsplit(self.delta_dec, [self.fixed_position_index])
-        # reconcatenate with the key in the middle
-        augmented_delta_dec = torch.cat((split[0], self.zero_val, split[1]))
-        # get the factors that correspond to each visibility, depending on obsid
-        delta_dec = augmented_delta_dec[obsid]
-
-        # apply phase shift
-        # convert from arcsec to radians
-        delta_ra *= constants.arcsec
-        delta_dec *= constants.arcsec
-
-        shift_factor = torch.exp(-2.0j * np.pi * (delta_ra * uu + delta_dec * vv))
-        vis_shift = vis * shift_factor
-
-        return vis_shift
-    
 
     def forward(self, uu, vv):
         r"""
@@ -292,11 +246,8 @@ def train(args, model, device, train_loader, optimizer, epoch, lam_ent, writer):
         # allow for per-obsid adjustments of amplitude scaling
         vis_scaled, weight_scaled = model.adjust_amplitudes(ddid, vis, weight_adjusted)
 
-        # allow for astrometric offsets on per obsid basis 
-        vis_shifted = model.adjust_positions(ddid, uu, vv, vis_scaled)
-
         loss = losses.neg_log_likelihood_avg(
-            vis_shifted, data, weight_scaled
+            vis_scaled, data, weight_scaled
         ) + lam_ent * losses.entropy(
             model.icube.packed_cube, prior_intensity=1e-4, tot_flux=0.253
         )
@@ -325,20 +276,44 @@ def train(args, model, device, train_loader, optimizer, epoch, lam_ent, writer):
             amp_dict = {str(obsid):10**val.item() for obsid, val in enumerate(model.log10_amp_factors)}
             writer.add_scalars("amp_scale_factors", amp_dict, step)
 
-            ra_dict = {str(obsid):val.item() for obsid, val in enumerate(model.delta_ra)}
-            writer.add_scalars("ra_dict", ra_dict, step)
-
-            dec_dict = {str(obsid):val.item() for obsid, val in enumerate(model.delta_dec)}
-            writer.add_scalars("dec_dict", dec_dict, step)
-
             ddid_str = "{:}".format(torch.unique(ddid).detach().cpu())
             writer.add_text("ddid", ddid_str, step)
 
             plots(model, step, writer)
-            residual_dirty_image(model.coords, vis_shifted, uu, vv, data, weight_scaled, step, writer)
-            plot_residual_histogram(vis_shifted, data, weight_scaled, ddid, step, writer)
+            residual_dirty_image(model.coords, vis_scaled, uu, vv, data, weight_scaled, step, writer)
+            plot_residual_histogram(vis_scaled, data, weight_scaled, ddid, step, writer)
             if args.dry_run:
                 break
+
+
+def validate(model, device, validate_loader):
+    model.eval()
+    validate_loss = 0
+    # speed up calculation by disabling gradients
+    with torch.no_grad():
+        for uu, vv, data, weight, ddid in validate_loader:
+            # send all values to device
+            uu, vv, data, weight, ddid = (
+                uu.to(device),
+                vv.to(device),
+                data.to(device),
+                weight.to(device),
+                ddid.to(device)
+            )
+
+            # get model visibilities
+            vis = model(uu, vv)
+
+            # correct the weights
+            weight_adjusted = model.adjust_weights(ddid, weight)
+
+            # calculate loss as total over all chunks
+            validate_loss += losses.neg_log_likelihood_avg(vis, data, weight_adjusted).item()
+
+    # re-normalize to total number of data points
+    validate_loss /= len(validate_loader)
+    return validate_loss
+
 
 def main():
     # Training settings
@@ -349,8 +324,20 @@ def main():
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=40000,
+        default=25000,
         help="input batch size for training",
+    )
+    parser.add_argument(
+        "--validation-batch-size",
+        type=int,
+        default=25000,
+        help="input batch size for validation",
+    )
+    parser.add_argument(
+        "--train-fraction",
+        type=float,
+        default=0.8,
+        help="The fraction of the dataset to use for training. The remainder will be used for validation.",
     )
     parser.add_argument(
         "--epochs",
@@ -392,7 +379,6 @@ def main():
     parser.add_argument("--sb_only", action="store_true", default=False)
     parser.add_argument("--freeze_weights", action="store_true")
     parser.add_argument("--freeze_amps", action="store_true")
-    parser.add_argument("--freeze_positions", action="store_true")
     args = parser.parse_args()
 
     # set seed
@@ -409,12 +395,35 @@ def main():
     # load the full dataset
     uu, vv, data, weight, ddid = loaddata.get_ddid_data(args.asdf, args.sb_only)
 
-    # convert to float32
-    uu = np.float32(uu)
-    vv = np.float32(vv)
-    data = np.complex64(data)
-    weight = np.float32(weight)
-    
+    nvis = len(uu)
+    print("Number of Visibility Points:", nvis)
+    # 42 million
+
+    # split the dataset into train / test by creating a list of indices
+    assert (args.train_fraction > 0) and (
+        args.train_fraction < 1
+    ), "--train-fraction must be greater than 0 and less than 1.0. You provided {}".format(
+        args.train_fraction
+    )
+    # full_indices = np.arange(len(uu))
+
+    # randomly split into train and validation sets
+    # train_size = round(len(uu) * args.train_fraction)
+    # rng = np.random.default_rng()
+    # train_indices = rng.choice(full_indices, size=train_size, replace=False)
+    # validation_indices = np.setdiff1d(full_indices, train_indices)
+
+    # initialize a PyTorch data object for each set
+    # TensorDataset can be indexed just like a numpy array
+    # def init_dataset(indices):
+    #     return TensorDataset(
+    #         torch.tensor(uu[indices]),
+    #         torch.tensor(vv[indices]),
+    #         torch.tensor(data[indices]),
+    #         torch.tensor(weight[indices]),
+    #         torch.tensor(ddid[indices])
+    #     )
+
     train_dataset = TensorDataset(
             torch.tensor(uu),
             torch.tensor(vv),
@@ -423,22 +432,31 @@ def main():
             torch.tensor(ddid)
         )
 
+    # train_dataset = init_dataset(train_indices)
+    # validation_dataset = init_dataset(validation_indices)
+
     # set the batch sizes for the loaders
     cuda_kwargs = {"num_workers": 1, "pin_memory": True}
     
     if args.sampler == "default":
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, **cuda_kwargs)
+        # validation_loader = DataLoader(validation_dataset, batch_size=args.validation_batch_size, shuffle=True, **cuda_kwargs)
 
     elif args.sampler == "ddid":
+        # train_ddids = ddid[train_indices]
         train_ddids = ddid
         train_sampler = DdidBatchSampler(train_ddids, args.batch_size)
         train_loader = DataLoader(train_dataset, batch_sampler=train_sampler, **cuda_kwargs)
+
+        # validation_ddids = ddid[validation_indices]
+        # validation_sampler = DdidBatchSampler(validation_ddids, args.validation_batch_size)
+        # validation_loader = DataLoader(validation_dataset, batch_sampler=validation_sampler, **cuda_kwargs)
 
     # create the model and send to device
     obsid_dict = {0:[0,1,2,3,4], 1:[5,6,7,8,9,10], 2:[11,12], 3:[13,14], 4:[15,16,17], 5:[18,19,20,21], 6:[22,23,24,25]}
     coords = coordinates.GridCoords(cell_size=0.005, npix=1028)
 
-    model = Net(coords, FWHM=args.FWHM, obsid_dict=obsid_dict, freeze_amps=args.freeze_amps, freeze_weights=args.freeze_weights, freeze_positions=args.freeze_positions).to(device)
+    model = Net(coords, obsid_dict=obsid_dict, freeze_amps=args.freeze_amps, freeze_weights=args.freeze_weights).to(device)
 
     # create optimizer
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
@@ -454,6 +472,10 @@ def main():
     # enter the loop
     for epoch in range(0, args.epochs):
         train(args, model, device, train_loader, optimizer, epoch, args.lam_ent, writer)
+        
+        # print("Logging validation")
+        # vloss_avg = validate(model, device, validation_loader)
+        # writer.add_scalar("vloss_avg", vloss_avg, epoch)
         optimizer.step()
 
         # overwrite checkpoint after each epoch

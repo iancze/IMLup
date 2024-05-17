@@ -153,5 +153,7 @@ def main():
     print("data", data)
     print("weight", weight)
 
+    print("dtype", uu.dtype)
+
 if __name__=="__main__":
     main()
