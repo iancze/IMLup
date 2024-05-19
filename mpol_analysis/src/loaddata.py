@@ -155,5 +155,7 @@ def main():
 
     print("dtype", uu.dtype)
 
+    print("Number of visibilities", len(data))
+
 if __name__=="__main__":
     main()
