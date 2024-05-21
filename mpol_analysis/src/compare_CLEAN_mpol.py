@@ -35,6 +35,7 @@ def main():
     # convert to Jy/pixel then sum
     RA, DEC, ext = fits_obj.get_extent(hdu.header)
     pixel_size_clean = np.abs((RA[1] - RA[0]) * (DEC[1] - DEC[0])) # arcsec^2
+    print("CLEAN peak", np.max(jy_arcsec), "Jy/arcsec^2")
     print("CLEAN flux", np.sum(jy_arcsec * pixel_size_clean), "Jy")
 
 
@@ -50,6 +51,7 @@ def main():
         # export to FITS
         icube.to_FITS(args.fitsfile)
 
+    print("MPoL peak", torch.max(icube.packed_cube).item(), "Jy/arcsec^2")
     print("MPoL flux", icube.flux.item(), "Jy")
 
     mpol_img = torch.squeeze(icube.sky_cube)
